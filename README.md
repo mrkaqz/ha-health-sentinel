@@ -126,6 +126,15 @@ python tests/run_all.py
 No dependencies beyond the standard library — the collectors under test are
 pure logic, driven with synthetic events against a real SQLite store.
 
+## Design notes
+
+Decisions that were researched and deliberately *not* built, kept so they don't
+have to be re-litigated:
+
+- [netconsole / off-box log forwarding](docs/design-notes/netconsole.md) —
+  why an add-on cannot receive netconsole, what HAOS does and doesn't allow, and
+  the exact conditions under which this becomes worth revisiting.
+
 ## Publishing your own build
 
 The add-on builds locally by default, which needs no CI. To publish prebuilt
