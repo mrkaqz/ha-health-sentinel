@@ -551,8 +551,15 @@
         });
     });
 
+    // Debounced: resize fires continuously while dragging a window edge, and
+    // each call refetches six metric series.
+    var resizeTimer = null;
     window.addEventListener('resize', function () {
-      if (state.view === 'now') renderNowCharts();
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        resizeTimer = null;
+        if (state.view === 'now') renderNowCharts();
+      }, 250);
     });
 
     refresh();

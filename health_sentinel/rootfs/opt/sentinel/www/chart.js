@@ -17,6 +17,11 @@
 
   var PALETTE = ['#38bdf8', '#f59e0b', '#4ade80', '#f87171', '#a78bfa', '#22d3ee'];
 
+  // Hard ceiling on the backing store, in device pixels. Purely a safety net:
+  // nothing should ever approach it, but an unbounded canvas allocation takes
+  // the whole tab down, so it must not be reachable by arithmetic error.
+  var MAX_BACKING = 8192;
+
   function niceStep(range, targetTicks) {
     if (range <= 0) return 1;
     var rough = range / targetTicks;
@@ -51,12 +56,31 @@
     });
 
     var ratio = global.devicePixelRatio || 1;
-    var cssWidth = canvas.clientWidth || canvas.parentNode.clientWidth || 600;
-    var cssHeight = parseInt(canvas.getAttribute('height'), 10) || 160;
+    var cssWidth = Math.max(
+      canvas.clientWidth || canvas.parentNode.clientWidth || 600, 10);
 
-    canvas.width = Math.round(cssWidth * ratio);
-    canvas.height = Math.round(cssHeight * ratio);
-    canvas.style.height = cssHeight + 'px';
+    // The intended CSS height has to be remembered separately, because
+    // assigning canvas.height ALSO rewrites the height attribute. Reading the
+    // attribute back on the next draw would feed in the already-scaled value as
+    // if it were CSS pixels, multiplying the canvas by devicePixelRatio on every
+    // refresh until the tab runs out of memory. Width is safe because it comes
+    // from clientWidth, which CSS governs.
+    if (!canvas.dataset.cssHeight) {
+      canvas.dataset.cssHeight =
+        String(parseInt(canvas.getAttribute('height'), 10) || 160);
+    }
+    var cssHeight = parseInt(canvas.dataset.cssHeight, 10) || 160;
+
+    var backingWidth = Math.min(Math.round(cssWidth * ratio), MAX_BACKING);
+    var backingHeight = Math.min(Math.round(cssHeight * ratio), MAX_BACKING);
+
+    // Assigning width or height clears and reallocates the canvas, so only do
+    // it when the size genuinely changed.
+    if (canvas.width !== backingWidth) canvas.width = backingWidth;
+    if (canvas.height !== backingHeight) canvas.height = backingHeight;
+    if (canvas.style.height !== cssHeight + 'px') {
+      canvas.style.height = cssHeight + 'px';
+    }
 
     var ctx = canvas.getContext('2d');
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
