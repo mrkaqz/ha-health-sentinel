@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web as aioweb
 
-from config import BUNDLE_DIR
+from config import BUNDLE_DIR, VERSION
 
 if TYPE_CHECKING:
     from main import Sentinel
@@ -43,8 +43,25 @@ def _dumps(data: Any) -> str:
     return json.dumps(data, default=str)
 
 
+@aioweb.middleware
+async def _revalidate(request: aioweb.Request, handler: Any) -> aioweb.StreamResponse:
+    """Make the browser revalidate the dashboard's assets.
+
+    aiohttp's static route sends no Cache-Control, so browsers fall back to
+    heuristic caching and can keep serving an old copy of the JavaScript after
+    the add-on has been updated — which looks exactly like "you didn't fix the
+    bug". Revalidation is nearly free on a LAN and removes the whole class of
+    problem. Asset URLs are also version-stamped, so even an intermediary cache
+    cannot shadow a new build.
+    """
+    response = await handler(request)
+    if request.path == "/" or request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 def create_app(sentinel: "Sentinel") -> aioweb.Application:
-    app = aioweb.Application()
+    app = aioweb.Application(middlewares=[_revalidate])
     app["sentinel"] = sentinel
 
     app.add_routes(
@@ -96,6 +113,7 @@ async def handle_status(request: aioweb.Request) -> aioweb.Response:
     return _json(
         {
             "now": int(time.time()),
+            "version": VERSION,
             "sentinel_uptime": sentinel.uptime(),
             "sentinel_started": sentinel.started_ts,
             "core": sentinel.live.get("core", {}),
@@ -611,4 +629,15 @@ async def handle_test_alert(request: aioweb.Request) -> aioweb.Response:
 
 
 async def handle_index(request: aioweb.Request) -> aioweb.StreamResponse:
-    return aioweb.FileResponse(os.path.join(WWW_DIR, "index.html"))
+    """Serve the dashboard with version-stamped asset URLs."""
+    try:
+        with open(os.path.join(WWW_DIR, "index.html"), "r", encoding="utf-8") as fh:
+            html = fh.read()
+    except OSError as err:
+        _LOGGER.error("Could not read index.html: %s", err)
+        return aioweb.Response(text="Dashboard unavailable", status=500)
+
+    for asset in ("style.css", "app.js", "chart.js"):
+        html = html.replace(f"static/{asset}", f"static/{asset}?v={VERSION}")
+
+    return aioweb.Response(text=html, content_type="text/html", charset="utf-8")

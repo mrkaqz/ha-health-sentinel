@@ -141,7 +141,8 @@
 
     var pulse = $('pulse');
     pulse.className = 'pulse ' + (core.reachable ? 'ok' : 'bad');
-    $('uptime').textContent = 'sentinel up ' + (data.sentinel_uptime || '—');
+    $('uptime').textContent = 'v' + (data.version || '?') + ' · up ' +
+      (data.sentinel_uptime || '—');
 
     var streams = data.streams || {};
     $('stream-host').className = 'stream ' + (streams.host_journal ? 'live' : 'dead');

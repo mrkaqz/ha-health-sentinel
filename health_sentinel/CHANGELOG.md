@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1
+
+- The dashboard's JavaScript and CSS are now served with version-stamped URLs
+  and revalidation headers. Previously a stale copy could shadow a new build —
+  either in the browser or in a proxy — which is indistinguishable from "the
+  bug was never fixed".
+- The running add-on version is shown in the dashboard header, so which build
+  you are actually looking at is answerable at a glance rather than by guessing.
+
 ## 0.3.0
 
 **Fixed**

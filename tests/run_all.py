@@ -8,7 +8,12 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODULES = ["test_patterns.py", "test_availability.py", "test_export.py"]
+MODULES = [
+    "test_patterns.py",
+    "test_availability.py",
+    "test_export.py",
+    "test_web_assets.py",
+]
 
 
 def main() -> int:

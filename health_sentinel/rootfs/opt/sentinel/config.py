@@ -35,6 +35,11 @@ SYS_THERMAL = "/sys/class/thermal"
 
 WEB_PORT = 8099
 
+# Set from the BUILD_VERSION build arg. Used to bust browser caches on the
+# dashboard's assets and shown in the UI, so "which build am I actually
+# looking at" is answerable without guessing.
+VERSION = os.environ.get("SENTINEL_VERSION", "").strip() or "dev"
+
 # bashio log levels -> python. "trace" and "notice" have no stdlib equivalent.
 _LOG_LEVELS = {
     "trace": logging.DEBUG,
