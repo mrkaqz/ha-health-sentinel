@@ -55,8 +55,24 @@
           <canvas class="chart" id="chart-psi" height="150"></canvas>
         </div>
         <div class="card">
-          <h2>Memory &amp; load</h2>
+          <h2>Memory</h2>
           <canvas class="chart" id="chart-mem" height="150"></canvas>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2>Load average</h2>
+          <p class="hint">
+            1, 5 and 15-minute averages. 1m running well above 5m/15m means load
+            just spiked; 5m/15m sitting high means it has been sustained.
+          </p>
+          <canvas class="chart" id="chart-load" height="150"></canvas>
+        </div>
+        <div class="card">
+          <h2>Temperature</h2>
+          <p class="hint">Hottest thermal zone on the host.</p>
+          <canvas class="chart" id="chart-temp" height="150"></canvas>
         </div>
       </div>
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5
+
+**Added**
+
+- Load average chart on the Now tab: 1m/5m/15m in one chart, so a spike versus
+  a sustained load is visible at a glance instead of only the 1m figure.
+- Temperature chart on the Now tab, with the same 80°C threshold line the
+  tile already warns at.
+
 ## 0.3.4
 
 **Fixed**

@@ -224,7 +224,10 @@
       'host.psi.memory.full.avg60',
       'host.psi.cpu.some.avg60',
       'host.mem.used_pct',
-      'host.load.1'
+      'host.load.1',
+      'host.load.5',
+      'host.load.15',
+      'host.temp.max'
     ].join(',');
 
     get('api/series?hours=6&metric=' + encodeURIComponent(metrics)).then(function (data) {
@@ -245,10 +248,21 @@
       });
 
       Chart.draw($('chart-mem'), {
+        series: [{ name: 'memory used %', points: s['host.mem.used_pct'] || [] }]
+      });
+
+      Chart.draw($('chart-load'), {
         series: [
-          { name: 'memory used %', points: s['host.mem.used_pct'] || [] },
-          { name: 'load 1m', points: s['host.load.1'] || [], color: '#f59e0b' }
+          { name: '1m', points: s['host.load.1'] || [] },
+          { name: '5m', points: s['host.load.5'] || [], color: '#f59e0b' },
+          { name: '15m', points: s['host.load.15'] || [], color: '#4ade80' }
         ]
+      });
+
+      Chart.draw($('chart-temp'), {
+        series: [{ name: 'Temperature (°C)', points: s['host.temp.max'] || [], color: '#f87171' }],
+        threshold: 80,
+        format: function (v) { return v.toFixed(0) + '°'; }
       });
     });
   }
