@@ -13,6 +13,11 @@ export SENTINEL_DISK_FREE_WARN_PCT="$(bashio::config 'disk_free_warn_pct')"
 export SENTINEL_MEMORY_WARN_PCT="$(bashio::config 'memory_warn_pct')"
 export SENTINEL_LOG_LEVEL="$(bashio::config 'log_level')"
 
+export SENTINEL_CHRONIC_AFTER_MINUTES="$(bashio::config 'chronic_after_minutes')"
+export SENTINEL_CLUSTER_WINDOW_SECONDS="$(bashio::config 'cluster_window_seconds')"
+export SENTINEL_CLUSTER_MIN_INTEGRATIONS="$(bashio::config 'cluster_min_integrations')"
+export SENTINEL_CLUSTER_MIN_ENTITIES="$(bashio::config 'cluster_min_entities')"
+
 export SENTINEL_TELEGRAM_ENABLED="$(bashio::config 'telegram_enabled')"
 export SENTINEL_TELEGRAM_BOT_TOKEN="$(bashio::config 'telegram_bot_token' '')"
 export SENTINEL_TELEGRAM_CHAT_ID="$(bashio::config 'telegram_chat_id' '')"

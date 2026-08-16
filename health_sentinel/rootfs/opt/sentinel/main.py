@@ -26,9 +26,11 @@ from aiohttp import web as aioweb
 import web
 from collectors import host_psi
 from collectors.addons import AddonTracker, classify_stop
+from collectors.availability import AvailabilityTracker
 from collectors.core_probe import CoreProbe
 from collectors.hardware import HardwareWatcher
 from collectors.host_events import HostEventTail
+from collectors.network import NetworkWatcher
 from collectors.recorder import RecorderWatcher
 from collectors.supervisor_api import SupervisorClient, container_stats_to_row
 from config import DB_PATH, STATE_PATH, WEB_PORT, Config, setup_logging
@@ -54,8 +56,21 @@ class Sentinel:
 
         self.addons = AddonTracker(self.client)
         self.hardware = HardwareWatcher(self.client)
+        self.network = NetworkWatcher(self.client)
         self.probe = CoreProbe(self.client)
-        self.recorder = RecorderWatcher(self.client, config.supervisor_token)
+        self.availability = AvailabilityTracker(
+            chronic_after_minutes=config.chronic_after_minutes,
+            cluster_window_seconds=config.cluster_window_seconds,
+            cluster_min_integrations=config.cluster_min_integrations,
+            cluster_min_entities=config.cluster_min_entities,
+        )
+        # One websocket serves both recorder ranking and availability tracking.
+        self.recorder = RecorderWatcher(
+            self.client,
+            config.supervisor_token,
+            availability=self.availability,
+            on_cluster=self._on_integration_cluster,
+        )
         self.detector = IncidentDetector(
             self.storage, config, self.client, self.addons, self.notifier
         )
@@ -88,6 +103,8 @@ class Sentinel:
         # Prime trackers so the first real poll reports changes, not everything.
         await self.addons.poll_states()
         await self.hardware.poll()
+        await self.network.poll()
+        self._restore_availability()
 
         await self._run_forensics()
         await self._start_web()
@@ -99,6 +116,7 @@ class Sentinel:
             asyncio.create_task(self._supervise("maintain", self._maintenance_loop)),
             asyncio.create_task(self._supervise("journal", self.journal.run)),
             asyncio.create_task(self._supervise("eventbus", self.recorder.run)),
+            asyncio.create_task(self._supervise("mapping", self._mapping_loop)),
         ]
 
         await self._stop.wait()
@@ -257,10 +275,21 @@ class Sentinel:
 
             await self._poll_addon_states()
             await self._poll_hardware()
+            await self._poll_network()
+
+            metrics.update(self.network.metrics())
+            metrics.update(self.availability.metrics())
 
             await self.storage.awrite_samples(ts, metrics)
+            await asyncio.to_thread(
+                self.storage.save_availability,
+                self.availability.persistable_states(),
+            )
+
             self.live.setdefault("metrics", {}).update(metrics)
             self.live["top_writers"] = self.recorder.top_writers()
+            self.live["network"] = self.network.state
+            self.live["integrations"] = self.availability.integration_health()
 
             await self._sleep(self.config.slow_interval)
 
@@ -276,6 +305,76 @@ class Sentinel:
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Maintenance pass failed")
+
+    async def _mapping_loop(self) -> None:
+        """Keep the entity -> integration map fresh.
+
+        The websocket asks for the entity registry on connect. If that command
+        is refused — it may require admin, which the add-on's token might not
+        have — this falls back to asking Core to resolve `integration_entities()`
+        for every loaded integration, which needs no elevated rights.
+        """
+        while not self._stop.is_set():
+            # Give the websocket a chance to answer before deciding to fall back.
+            await self._sleep(45)
+            if self._stop.is_set():
+                return
+
+            if self.recorder.registry_available is False:
+                mapping = await self.probe.integration_entity_map()
+                if mapping:
+                    self.availability.set_mapping(mapping, "template_fallback")
+                else:
+                    _LOGGER.warning(
+                        "Could not build an entity-to-integration map by either "
+                        "route; per-integration health will be unavailable"
+                    )
+            await self._sleep(3600)
+
+    def _restore_availability(self) -> None:
+        """Reload dead-entity history so 'broken since' survives a restart."""
+        try:
+            rows = self.storage.load_availability()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Could not restore availability history")
+            return
+        for row in rows:
+            self.availability.seed(
+                row["entity_id"], row["state"], row.get("since_ts")
+            )
+        if rows:
+            _LOGGER.info("Restored availability history for %d entities", len(rows))
+
+    async def _on_integration_cluster(self, cluster: dict[str, Any]) -> None:
+        """Several unrelated integrations dropped at once."""
+        detail = dict(cluster)
+        # Network state at the moment of the drop is the first thing anyone
+        # will want to check, so capture it into the event rather than making
+        # someone correlate two timelines by hand.
+        detail["network"] = self.network.state
+
+        await self.storage.aadd_event(
+            "multi_integration_outage",
+            cluster["summary"],
+            "critical",
+            "availability",
+            detail,
+            ts=cluster["ts"],
+        )
+        _LOGGER.error("Multi-integration outage: %s", cluster["summary"])
+
+        lines = [cluster["summary"], ""]
+        for integration, entities in cluster["detail"].items():
+            lines.append(f"  {integration}: {len(entities)} entities")
+        if self.network.state.get("host_internet") is False:
+            lines.append("")
+            lines.append("Host internet connectivity is also down.")
+
+        await self.notifier.alert(
+            "Multiple integrations went offline together",
+            "\n".join(lines),
+            severity="critical",
+        )
 
     # --------------------------------------------------------------- handlers
 
@@ -353,6 +452,20 @@ class Sentinel:
                     f"{message}\n\nThis is how a Zigbee or Z-Wave coordinator "
                     "drops off, and it will unavailable every device behind it.",
                     severity="critical",
+                )
+
+    async def _poll_network(self) -> None:
+        for change in await self.network.poll():
+            await self.storage.aadd_event(
+                change["kind"],
+                change["message"],
+                change["severity"],
+                "network",
+                change.get("detail"),
+            )
+            if change["severity"] == "critical":
+                await self.notifier.alert(
+                    "Network link lost", change["message"], severity="critical"
                 )
 
     async def _check_thresholds(self, metrics: dict[str, float]) -> None:

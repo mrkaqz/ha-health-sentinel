@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.3.0
+
+**Fixed**
+
+- Charts grew taller on every refresh until the dashboard tab crashed.
+  Assigning `canvas.height` also rewrites the height attribute, which the code
+  then read back as if it were CSS pixels, multiplying the canvas by
+  `devicePixelRatio` every 5 seconds. Only visible on displays with scaling,
+  which is why it was not caught before release.
+- Every successful WebSocket result was fed to the system-health handler
+  regardless of what had been requested. Results are now routed by message id.
+
+**Added**
+
+- **Per-integration availability tracking.** Entities are mapped to their
+  integration via the entity registry, or via a template fallback when the
+  registry is not permitted. The Integrations view shows total, unavailable and
+  chronic counts per integration.
+- **Multi-integration outage detection.** When several unrelated integrations
+  each lose entities within a short window, that is recorded as a critical event
+  and alerted — the signature of a shared cause rather than one broken device.
+  Chronically dead entities are excluded, so a restart on a system with many
+  long-dead entities does not trigger it.
+- **Standing problems panel**, separating entities that have been broken for
+  hours from those that just dropped.
+- **USB enumeration failure classification** — `device not accepting address`,
+  `unable to enumerate`, descriptor read errors, over-current and bus resets.
+  These precede a device vanishing, so they are early warning rather than
+  after-the-fact confirmation.
+- **Network state tracking** via `/network/info`: link up/down, DHCP address
+  changes, gateway and DNS changes, and internet reachability. Deliberately no
+  traffic counters — those are namespaced per container and reading the host's
+  would require privileges this add-on does not take.
+- Integration health and network state in the full diagnostic export.
+- A `tests/` directory: 54 assertions covering kernel pattern classification,
+  outage-cluster logic and export contents.
+
 ## 0.2.0
 
 - Log export from the Logs view. **Download this log** saves the current source

@@ -24,6 +24,7 @@
   <nav class="tabs">
     <button class="tab active" data-view="now">Now</button>
     <button class="tab" data-view="timeline">Timeline</button>
+    <button class="tab" data-view="integrations">Integrations</button>
     <button class="tab" data-view="host">Host</button>
     <button class="tab" data-view="containers">Containers</button>
     <button class="tab" data-view="recorder">Recorder</button>
@@ -78,6 +79,35 @@
       <div id="incident-detail" class="card hidden"></div>
     </section>
 
+    <!-- ---------------------------------------------------- INTEGRATIONS -->
+    <section id="view-integrations" class="view">
+      <div class="card">
+        <h2>Multi-integration outages</h2>
+        <p class="hint">
+          Several unrelated integrations losing entities within the same couple
+          of minutes points at a shared cause — the network, DNS or power —
+          rather than at any one device. Entities that have been dead a long
+          time are excluded, so a restart does not look like an outage.
+        </p>
+        <div id="cluster-list" class="events"></div>
+      </div>
+
+      <div class="card">
+        <h2>Integration health</h2>
+        <p class="hint" id="mapping-note"></p>
+        <table class="data" id="integration-table"></table>
+      </div>
+
+      <div class="card">
+        <h2>Standing problems</h2>
+        <p class="hint">
+          Entities that have been unavailable long enough to count as broken
+          rather than blipping. These are excluded from outage detection.
+        </p>
+        <table class="data" id="chronic-table"></table>
+      </div>
+    </section>
+
     <!-- ------------------------------------------------------------ HOST -->
     <section id="view-host" class="view">
       <div class="grid-2">
@@ -94,6 +124,16 @@
           <table class="data" id="serial-table"></table>
         </div>
       </div>
+      <div class="card">
+        <h2>Network interfaces</h2>
+        <p class="hint">
+          Link state, addresses and connectivity. Traffic counters are not
+          shown: they are namespaced per container, and reading the host's would
+          need privileges this add-on deliberately does not take.
+        </p>
+        <table class="data" id="network-table"></table>
+      </div>
+
       <div class="card">
         <h2>Kernel &amp; hardware events</h2>
         <p class="hint">

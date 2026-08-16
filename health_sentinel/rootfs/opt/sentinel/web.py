@@ -58,6 +58,7 @@ def create_app(sentinel: "Sentinel") -> aioweb.Application:
             aioweb.get("/api/incidents/{incident_id}/bundle", handle_bundle),
             aioweb.get("/api/containers", handle_containers),
             aioweb.get("/api/host", handle_host),
+            aioweb.get("/api/integrations", handle_integrations),
             aioweb.get("/api/recorder", handle_recorder),
             aioweb.get("/api/logs", handle_logs),
             aioweb.get("/api/logs/export", handle_logs_export),
@@ -255,6 +256,36 @@ async def handle_host(request: aioweb.Request) -> aioweb.Response:
             "serial_devices": sentinel.hardware.serial_devices,
             "kernel_events": kernel_events,
             "psi_available": sentinel.capabilities.get("proc_psi", False),
+            "network": sentinel.network.state,
+        }
+    )
+
+
+async def handle_integrations(request: aioweb.Request) -> aioweb.Response:
+    sentinel: "Sentinel" = request.app["sentinel"]
+    clusters = await sentinel.storage.aquery(
+        "SELECT * FROM events WHERE kind = 'multi_integration_outage' "
+        "ORDER BY ts DESC LIMIT 50"
+    )
+    for row in clusters:
+        if row.get("detail"):
+            try:
+                row["detail"] = json.loads(row["detail"])
+            except (TypeError, ValueError):
+                pass
+
+    return _json(
+        {
+            "integrations": await asyncio.to_thread(
+                sentinel.availability.integration_health
+            ),
+            "chronic": await asyncio.to_thread(
+                sentinel.availability.chronic_entities
+            ),
+            "clusters": clusters,
+            "mapping_source": sentinel.availability.mapping_source,
+            "mapped_entities": sentinel.availability.mapped_entities,
+            "chronic_after_minutes": sentinel.config.chronic_after_minutes,
         }
     )
 
@@ -376,9 +407,16 @@ async def _build_full_export(sentinel: "Sentinel", lines: int) -> str:
         "  2. KERNEL EVENTS  - OOM kills, hardware errors, USB drops, disk faults.\n"
         "                      A kernel OOM kill here explains a Core death that\n"
         "                      the Core log itself will show no reason for.\n"
-        "  3. SYSTEM         - versions, memory, disk, pressure at export time\n"
-        "  4. CONTAINERS     - which add-on is consuming or leaking memory\n"
-        "  5. LOGS           - Core, Supervisor and host journal\n"
+        "  3. INTEGRATIONS   - which integrations are degraded, and whether any\n"
+        "                      went offline together. Several unrelated ones\n"
+        "                      failing within a couple of minutes points at a\n"
+        "                      shared cause (network, DNS, power), not at any\n"
+        "                      one device.\n"
+        "  4. NETWORK        - link state, addresses and connectivity, to check\n"
+        "                      against the timing of any integration outage\n"
+        "  5. SYSTEM         - versions, memory, disk, pressure at export time\n"
+        "  6. CONTAINERS     - which add-on is consuming or leaking memory\n"
+        "  7. LOGS           - Core, Supervisor and host journal\n"
         "\n"
         "Note on ordering: Core's log ends when Core dies, so the cause of a hard\n"
         "crash is usually NOT in it. Check the host journal and kernel events for\n"
@@ -450,6 +488,69 @@ async def _build_full_export(sentinel: "Sentinel", lines: int) -> str:
             f"{when}  {event['severity'].upper():<8} {event['kind']:<18} "
             f"{event['message']}"
         )
+
+    # ---- integrations ----------------------------------------------------
+    out.append(_section("INTEGRATION HEALTH"))
+    health = await asyncio.to_thread(sentinel.availability.integration_health)
+    if not health:
+        out.append(
+            "No integration mapping available — per-integration health could "
+            "not be determined."
+        )
+    else:
+        out.append(
+            f"Mapping source: {sentinel.availability.mapping_source} "
+            f"({sentinel.availability.mapped_entities} entities)\n"
+        )
+        out.append(
+            f"{'integration':<26}{'total':>8}{'unavail':>9}{'chronic':>9}{'dead %':>9}"
+        )
+        for row in health:
+            out.append(
+                f"{row['integration'][:25]:<26}{row['total']:>8}"
+                f"{row['unavailable']:>9}{row['chronic']:>9}"
+                f"{row['unavailable_pct']:>9.1f}"
+            )
+        out.append(
+            "\n'chronic' means unavailable for longer than "
+            f"{sentinel.config.chronic_after_minutes} minutes — a standing "
+            "problem rather than part of a sudden outage."
+        )
+
+    clusters = await sentinel.storage.aquery(
+        "SELECT ts, message FROM events WHERE kind = 'multi_integration_outage' "
+        "ORDER BY ts DESC LIMIT 20"
+    )
+    out.append("\nMulti-integration outages:")
+    if not clusters:
+        out.append("  None detected.")
+    for row in clusters:
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(row["ts"]))
+        out.append(f"  {when}  {row['message']}")
+
+    # ---- network ---------------------------------------------------------
+    out.append(_section("NETWORK"))
+    net = sentinel.network.state
+    out.append(f"Host internet:       {net.get('host_internet')}")
+    out.append(f"Supervisor internet: {net.get('supervisor_internet')}\n")
+    out.append(
+        f"{'interface':<14}{'type':<12}{'connected':>10}{'primary':>9}  "
+        f"{'address':<20}{'gateway':<16}"
+    )
+    for interface in net.get("interfaces") or []:
+        out.append(
+            f"{str(interface.get('interface'))[:13]:<14}"
+            f"{str(interface.get('type'))[:11]:<12}"
+            f"{str(interface.get('connected')):>10}"
+            f"{str(interface.get('primary')):>9}  "
+            f"{str(interface.get('address') or '-'):<20}"
+            f"{str(interface.get('gateway') or '-'):<16}"
+        )
+    out.append(
+        "\nTraffic counters are not available: they are namespaced per "
+        "container, and reading the host's would require privileges this "
+        "add-on deliberately does not take."
+    )
 
     # ---- containers ------------------------------------------------------
     out.append(_section("CONTAINER RESOURCE USE"))

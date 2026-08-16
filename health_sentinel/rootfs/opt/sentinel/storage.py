@@ -89,6 +89,18 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Dead entities and when they died. Persisted so that "how long has this been
+-- broken" survives an add-on restart; without it every long-dead entity would
+-- look freshly broken on startup and drown the outage detector.
+CREATE TABLE IF NOT EXISTS entity_availability (
+    entity_id TEXT PRIMARY KEY,
+    platform  TEXT,
+    state     TEXT,
+    since_ts  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_availability_platform
+    ON entity_availability (platform);
 """
 
 # Events at or above this severity are never purged — they are the evidence.
@@ -268,6 +280,25 @@ class Storage:
                 (boot_id, host_boot_ts, detected_ts, 1 if clean else 0),
             )
             self._conn.commit()
+
+    # ---------------------------------------------------------- availability
+
+    def save_availability(self, rows: Sequence[tuple[str, str, str, int]]) -> None:
+        """Replace the dead-entity snapshot."""
+        with self._lock:
+            self._conn.execute("DELETE FROM entity_availability")
+            if rows:
+                self._conn.executemany(
+                    """INSERT OR REPLACE INTO entity_availability
+                       (entity_id, platform, state, since_ts) VALUES (?, ?, ?, ?)""",
+                    rows,
+                )
+            self._conn.commit()
+
+    def load_availability(self) -> list[dict[str, Any]]:
+        return self.query(
+            "SELECT entity_id, platform, state, since_ts FROM entity_availability"
+        )
 
     # ----------------------------------------------------------------- reads
 

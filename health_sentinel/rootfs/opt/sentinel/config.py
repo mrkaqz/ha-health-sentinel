@@ -85,6 +85,10 @@ class Config:
     retention_rollup_days: int
     disk_free_warn_pct: int
     memory_warn_pct: int
+    chronic_after_minutes: int
+    cluster_window_seconds: int
+    cluster_min_integrations: int
+    cluster_min_entities: int
     telegram_enabled: bool
     telegram_bot_token: str
     telegram_chat_id: str
@@ -104,6 +108,12 @@ class Config:
             retention_rollup_days=_env_int("SENTINEL_RETENTION_ROLLUP_DAYS", 90),
             disk_free_warn_pct=_env_int("SENTINEL_DISK_FREE_WARN_PCT", 10),
             memory_warn_pct=_env_int("SENTINEL_MEMORY_WARN_PCT", 90),
+            chronic_after_minutes=_env_int("SENTINEL_CHRONIC_AFTER_MINUTES", 60),
+            cluster_window_seconds=_env_int("SENTINEL_CLUSTER_WINDOW_SECONDS", 120),
+            cluster_min_integrations=_env_int(
+                "SENTINEL_CLUSTER_MIN_INTEGRATIONS", 3
+            ),
+            cluster_min_entities=_env_int("SENTINEL_CLUSTER_MIN_ENTITIES", 2),
             telegram_enabled=_env_bool("SENTINEL_TELEGRAM_ENABLED"),
             telegram_bot_token=_env_str("SENTINEL_TELEGRAM_BOT_TOKEN"),
             telegram_chat_id=_env_str("SENTINEL_TELEGRAM_CHAT_ID"),

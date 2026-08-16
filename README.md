@@ -44,6 +44,16 @@ directly.
 - The previous run's `home-assistant.log.1`, captured before it is overwritten
 - A downloadable evidence bundle per incident
 
+**Integration availability**
+- Per-integration entity health: total, unavailable, and how much of it is a
+  standing problem rather than a new one
+- **Multi-integration outage detection** — several unrelated integrations
+  losing entities within the same couple of minutes is the signature of a
+  shared cause, not a device fault. Long-dead entities are excluded so a
+  restart does not look like an outage.
+- Network link state, DHCP address changes, gateway and DNS changes, captured
+  into the outage event so the two timelines are already correlated
+
 **Recorder pressure**
 - Database size over time, and which entities generate the most state changes.
   Every state change is a recorder write, so this ranks what is actually filling
@@ -95,6 +105,10 @@ Health Sentinel appears in the store like any other add-on.
 | `retention_rollup_days` | 90 | How long 1-minute rollups are kept |
 | `disk_free_warn_pct` | 10 | Disk-free warning threshold |
 | `memory_warn_pct` | 90 | Memory warning threshold |
+| `chronic_after_minutes` | 60 | When a dead entity becomes a standing problem rather than an event |
+| `cluster_window_seconds` | 120 | How close together integration drops must be to count as one outage |
+| `cluster_min_integrations` | 3 | How many integrations must be affected to alert |
+| `cluster_min_entities` | 2 | How many entities each must lose to count |
 | `telegram_enabled` | false | Turn on Telegram alerts |
 | `telegram_bot_token` | — | From [@BotFather](https://t.me/botfather) |
 | `telegram_chat_id` | — | Your chat or group id |
@@ -102,6 +116,15 @@ Health Sentinel appears in the store like any other add-on.
 | `log_level` | info | Add-on log verbosity |
 
 Incidents are never deleted. Only samples age out.
+
+## Tests
+
+```bash
+python tests/run_all.py
+```
+
+No dependencies beyond the standard library — the collectors under test are
+pure logic, driven with synthetic events against a real SQLite store.
 
 ## Publishing your own build
 

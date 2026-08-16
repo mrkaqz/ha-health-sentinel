@@ -29,7 +29,8 @@ Two things worth doing straight away:
 | --- | --- |
 | **Now** | Live state. Core latency, memory pressure, load, disk, temperature. |
 | **Timeline** | Every incident, with a verdict. Click one for the full report. |
-| **Host** | HAOS version and boot slot, serial devices, and the live kernel event feed. |
+| **Integrations** | Which integrations are degraded, what has been broken for a long time, and whether several went offline together. |
+| **Host** | HAOS version and boot slot, serial devices, network interfaces, and the live kernel event feed. |
 | **Containers** | Per-add-on CPU and memory, sorted by memory, with growth slopes and restart counts. |
 | **Recorder** | Database size and the entities generating the most writes. |
 | **Logs** | Core, Supervisor, host journal and per-add-on logs with a filter, plus file export. |
@@ -65,6 +66,40 @@ shows up.
 classified events, add-on states at the moment of the incident, and the relevant
 log excerpts including the previous boot's journal. It is self-contained, so it
 stays useful after the machine has been rebuilt.
+
+## The Integrations view
+
+"Several of my devices went offline around 7PM" is a different question from
+"Home Assistant crashed", and an aggregate count of unavailable entities cannot
+answer it. This view breaks availability down by integration.
+
+**Multi-integration outages** is the part worth watching. When several
+*unrelated* integrations each lose entities within the same couple of minutes,
+that is not a coincidence — one WiFi integration failing is a device problem,
+but ESPHome, EZVIZ and TP-Link failing together is a network, DNS or power
+problem. That gets its own critical event and alert, with the network state at
+that moment attached so you do not have to correlate two timelines by hand.
+
+**Standing problems** is the counterweight. On a real system a lot of entities
+are simply dead — a camera unplugged months ago, a bulb that was thrown out.
+Anything unavailable for longer than `chronic_after_minutes` (default 60) moves
+here and stops counting toward outage detection. Without that split, every
+restart would re-report hundreds of long-dead entities and look like a
+catastrophe.
+
+Tuning, if the detector is too quiet or too noisy:
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `cluster_min_integrations` | 3 | How many integrations must be affected |
+| `cluster_min_entities` | 2 | How many entities each must lose to count |
+| `cluster_window_seconds` | 120 | How close together the drops must be |
+| `chronic_after_minutes` | 60 | When a dead entity stops being an event |
+
+Entity-to-integration mapping comes from the entity registry. If the add-on's
+token is not permitted to read it, the add-on falls back to asking Home
+Assistant to resolve `integration_entities()` for every loaded integration,
+which needs no elevated rights. The view states which route was used.
 
 ## Exporting logs for AI analysis
 

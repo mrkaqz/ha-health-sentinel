@@ -15,6 +15,7 @@ the classic signature in the minutes before a hang.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -29,6 +30,8 @@ _LOGGER = logging.getLogger(__name__)
 # Deliberately short. A probe that takes longer than this is itself the finding.
 _PROBE_TIMEOUT = aiohttp.ClientTimeout(total=10)
 _TEMPLATE_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Resolving every integration's entity list is a big render; give it room.
+_MAP_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 # One round trip that makes Core do real work across its state machine.
 _CENSUS_TEMPLATE = (
@@ -107,6 +110,73 @@ class CoreProbe:
                 supervisor_state=supervisor_state,
                 error=str(err) or err.__class__.__name__,
             )
+
+    async def integration_entity_map(self) -> dict[str, str]:
+        """Fallback entity -> integration mapping, needing no admin rights.
+
+        Used when `config/entity_registry/list` is refused. Asks Core for its
+        loaded components, then has Core itself resolve `integration_entities()`
+        for each one, so the mapping never has to be guessed from entity ids.
+        """
+        components = await self._loaded_integrations()
+        if not components:
+            return {}
+
+        # Core does the work; we get back "integration=entity,entity,..." lines.
+        listing = json.dumps(sorted(components))
+        template = (
+            "{%- set ints = " + listing + " -%}"
+            "{%- for i in ints -%}"
+            "{%- set e = integration_entities(i) -%}"
+            "{%- if e %}{{ i }}={{ e | join(',') }}\n{% endif -%}"
+            "{%- endfor -%}"
+        )
+
+        try:
+            async with self._client.session.post(
+                f"{self._base}/core/api/template",
+                json={"template": template},
+                timeout=_MAP_TIMEOUT,
+            ) as response:
+                if response.status != 200:
+                    _LOGGER.warning(
+                        "Integration mapping template failed: HTTP %s", response.status
+                    )
+                    return {}
+                rendered = await response.text()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("Integration mapping template failed: %s", err)
+            return {}
+
+        mapping: dict[str, str] = {}
+        for line in rendered.splitlines():
+            integration, _, entities = line.partition("=")
+            if not integration or not entities:
+                continue
+            for entity_id in entities.split(","):
+                entity_id = entity_id.strip()
+                if entity_id:
+                    mapping[entity_id] = integration.strip()
+        return mapping
+
+    async def _loaded_integrations(self) -> list[str]:
+        """Integration domains currently loaded by Core."""
+        try:
+            async with self._client.session.get(
+                f"{self._base}/core/api/config", timeout=_PROBE_TIMEOUT
+            ) as response:
+                if response.status != 200:
+                    return []
+                config = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+            _LOGGER.debug("Could not read Core config: %s", err)
+            return []
+
+        # `components` mixes integration domains with "domain.platform" entries;
+        # only the bare domains are integrations.
+        return sorted(
+            {c for c in (config.get("components") or []) if c and "." not in c}
+        )
 
     async def entity_census(self) -> dict[str, float]:
         """Entity counts via one template render.

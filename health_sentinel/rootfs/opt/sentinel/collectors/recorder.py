@@ -21,13 +21,16 @@ import json
 import logging
 import time
 from collections import Counter
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import aiohttp
 
+from collectors.availability import AvailabilityTracker, parse_iso
 from collectors.supervisor_api import SupervisorClient
 
 _LOGGER = logging.getLogger(__name__)
+
+ClusterCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 _WS_PATH = "/core/websocket"
 _RECONNECT_DELAY = 15
@@ -40,10 +43,23 @@ _WINDOW_SECONDS = 3600
 class RecorderWatcher:
     """Counts state changes per entity and tracks recorder database size."""
 
-    def __init__(self, client: SupervisorClient, token: str) -> None:
+    def __init__(
+        self,
+        client: SupervisorClient,
+        token: str,
+        availability: "AvailabilityTracker | None" = None,
+        on_cluster: ClusterCallback | None = None,
+    ) -> None:
         self._client = client
         self._token = token
         self._ws_url = client.base.replace("http://", "ws://") + _WS_PATH
+        self._availability = availability
+        self._on_cluster = on_cluster
+        # Result messages carry only an id, so remember what each id asked for.
+        # Without this every successful result was fed to the system-health
+        # handler regardless of what it actually was.
+        self._pending: dict[int, str] = {}
+        self._registry_available: bool | None = None
 
         self._counts: Counter[str] = Counter()
         self._window_started = time.time()
@@ -132,14 +148,26 @@ class RecorderWatcher:
             self._connected = True
             _LOGGER.info("Recorder watcher connected to Core event bus")
 
-            await self._send(ws, {"type": "subscribe_events", "event_type": "state_changed"})
+            await self._send(
+                ws, {"type": "subscribe_events", "event_type": "state_changed"},
+                "subscribe",
+            )
+            if self._availability is not None:
+                # Registry gives entity -> integration; get_states gives the
+                # current value and, crucially, last_changed — so chronic vs
+                # blip is correct immediately after a restart rather than
+                # treating every long-dead entity as freshly broken.
+                await self._send(
+                    ws, {"type": "config/entity_registry/list"}, "registry"
+                )
+                await self._send(ws, {"type": "get_states"}, "states")
             await self._request_db_size(ws)
 
             last_health = time.time()
             async for message in ws:
                 if message.type != aiohttp.WSMsgType.TEXT:
                     break
-                self._handle(json.loads(message.data))
+                await self._handle(json.loads(message.data))
 
                 self._maybe_roll_window()
                 if time.time() - last_health > 300:
@@ -159,33 +187,115 @@ class RecorderWatcher:
         return True
 
     async def _send(
-        self, ws: aiohttp.ClientWebSocketResponse, payload: dict[str, Any]
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        payload: dict[str, Any],
+        kind: str,
     ) -> int:
         self._msg_id += 1
         payload["id"] = self._msg_id
+        self._pending[self._msg_id] = kind
         await ws.send_json(payload)
         return self._msg_id
 
     async def _request_db_size(self, ws: aiohttp.ClientWebSocketResponse) -> None:
-        await self._send(ws, {"type": "system_health/info"})
+        await self._send(ws, {"type": "system_health/info"}, "health")
 
     # -------------------------------------------------------------- handling
 
-    def _handle(self, message: dict[str, Any]) -> None:
+    async def _handle(self, message: dict[str, Any]) -> None:
         kind = message.get("type")
         if kind == "event":
-            self._handle_event(message.get("event") or {})
-        elif kind == "result" and message.get("success"):
-            self._handle_system_health(message.get("result") or {})
+            await self._handle_event(message.get("event") or {})
+            return
+        if kind != "result":
+            return
 
-    def _handle_event(self, event: dict[str, Any]) -> None:
+        what = self._pending.pop(message.get("id"), None)
+        if not message.get("success"):
+            if what == "registry":
+                # Registry commands may require admin. Not fatal — main.py has a
+                # template-based fallback that needs no elevated rights.
+                self._registry_available = False
+                _LOGGER.info(
+                    "Entity registry not available to this token (%s); "
+                    "integration mapping will use the template fallback",
+                    (message.get("error") or {}).get("code", "unknown"),
+                )
+            return
+
+        result = message.get("result")
+        if what == "health":
+            self._handle_system_health(result or {})
+        elif what == "registry":
+            self._handle_registry(result or [])
+        elif what == "states":
+            self._handle_states(result or [])
+
+    def _handle_registry(self, entries: list[dict[str, Any]]) -> None:
+        if self._availability is None:
+            return
+        mapping = {
+            entry["entity_id"]: entry["platform"]
+            for entry in entries
+            if entry.get("entity_id") and entry.get("platform")
+        }
+        if not mapping:
+            self._registry_available = False
+            return
+        self._registry_available = True
+        self._availability.set_mapping(mapping, "entity_registry")
+
+    def _handle_states(self, states: list[dict[str, Any]]) -> None:
+        """Seed current availability from a full state snapshot."""
+        if self._availability is None:
+            return
+        now = int(time.time())
+        seeded = 0
+        for state in states:
+            entity_id = state.get("entity_id")
+            value = state.get("state")
+            if not entity_id or value is None:
+                continue
+            since = now
+            changed = state.get("last_changed")
+            if changed:
+                parsed = parse_iso(changed)
+                if parsed:
+                    since = parsed
+            self._availability.seed(entity_id, value, since)
+            seeded += 1
+        _LOGGER.info("Seeded availability state for %d entities", seeded)
+
+    @property
+    def registry_available(self) -> bool | None:
+        """True/False once known, None while still unanswered."""
+        return self._registry_available
+
+    async def _handle_event(self, event: dict[str, Any]) -> None:
         if event.get("event_type") != "state_changed":
             return
-        entity_id = (event.get("data") or {}).get("entity_id")
+        data = event.get("data") or {}
+        entity_id = data.get("entity_id")
         if not entity_id:
             return
         self._counts[entity_id] += 1
         self._total_changes += 1
+
+        if self._availability is None:
+            return
+
+        new_state = (data.get("new_state") or {}).get("state")
+        if new_state is None:
+            # Entity removed rather than changed.
+            return
+        old_state = (data.get("old_state") or {}).get("state")
+
+        if self._availability.observe(entity_id, new_state, old_state) is None:
+            return
+        cluster = self._availability.check_cluster()
+        if cluster and self._on_cluster:
+            await self._on_cluster(cluster)
 
     def _handle_system_health(self, result: dict[str, Any]) -> None:
         recorder = (result.get("recorder") or {}).get("info") or {}

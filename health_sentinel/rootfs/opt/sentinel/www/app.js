@@ -346,6 +346,79 @@
     });
   }
 
+  // -------------------------------------------------------- integrations
+
+  function renderIntegrations() {
+    get('api/integrations').then(function (data) {
+      var note = $('mapping-note');
+      if (data.mapped_entities) {
+        note.textContent = 'Mapped ' + data.mapped_entities +
+          ' entities to integrations via ' +
+          (data.mapping_source === 'entity_registry'
+            ? 'the entity registry.'
+            : 'template fallback (the entity registry was not available).');
+      } else {
+        note.textContent = 'No entity mapping yet — this populates shortly ' +
+          'after Home Assistant connects.';
+      }
+
+      // Clusters
+      var list = $('cluster-list');
+      clear(list);
+      if (!data.clusters || !data.clusters.length) {
+        list.appendChild(el('p', 'muted',
+          'No multi-integration outages detected. That is the good outcome.'));
+      } else {
+        data.clusters.forEach(function (row) {
+          list.appendChild(eventRow(row));
+        });
+      }
+
+      // Per-integration health
+      table($('integration-table'), [
+        { label: 'Integration' },
+        { label: 'Entities', numeric: true },
+        { label: 'Unavailable', numeric: true },
+        { label: 'Chronic', numeric: true },
+        { label: 'Dead %', numeric: true },
+        { label: 'Last drop' }
+      ], data.integrations || [], function (row) {
+        var tr = el('tr');
+        tr.appendChild(el('td', null, row.integration));
+        tr.appendChild(el('td', 'num', row.total));
+
+        var dead = el('td', 'num', row.unavailable);
+        if (row.unavailable > 0) dead.className = 'num leak';
+        tr.appendChild(dead);
+
+        tr.appendChild(el('td', 'num', row.chronic));
+
+        var pct = el('td', 'num', num(row.unavailable_pct, 1));
+        if (row.unavailable_pct >= 50) pct.className = 'num bad';
+        else if (row.unavailable_pct >= 20) pct.className = 'num leak';
+        tr.appendChild(pct);
+
+        tr.appendChild(el('td', 'muted', row.last_drop ? fmtTime(row.last_drop) : '—'));
+        return tr;
+      });
+
+      // Chronic entities
+      table($('chronic-table'), [
+        { label: 'Entity' },
+        { label: 'Integration' },
+        { label: 'State' },
+        { label: 'Broken for', numeric: true }
+      ], data.chronic || [], function (row) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'mono', row.entity_id));
+        tr.appendChild(el('td', null, row.platform));
+        tr.appendChild(el('td', null, row.state));
+        tr.appendChild(el('td', 'num', fmtDuration(row.dead_seconds)));
+        return tr;
+      });
+    });
+  }
+
   // ---------------------------------------------------------------- host
 
   function renderHost() {
@@ -384,6 +457,26 @@
           tr.appendChild(el('td', 'mono', device.by_id || device.dev_path || ''));
           return tr;
         });
+
+      var net = data.network || {};
+      table($('network-table'), [
+        { label: 'Interface' },
+        { label: 'Type' },
+        { label: 'Connected' },
+        { label: 'Address' },
+        { label: 'Gateway' }
+      ], net.interfaces || [], function (row) {
+        var tr = el('tr');
+        tr.appendChild(el('td', null,
+          row.interface + (row.primary ? ' (primary)' : '')));
+        tr.appendChild(el('td', null, row.type || '—'));
+        var conn = el('td', null, row.connected ? 'yes' : 'NO');
+        if (!row.connected) conn.className = 'bad';
+        tr.appendChild(conn);
+        tr.appendChild(el('td', 'mono', row.address || '—'));
+        tr.appendChild(el('td', 'mono', row.gateway || '—'));
+        return tr;
+      });
 
       renderEvents($('kernel-events'), data.kernel_events,
         'No kernel or hardware events recorded. Nothing has gone wrong at the ' +
@@ -517,6 +610,7 @@
 
     if (state.view === 'now') renderNowCharts();
     if (state.view === 'timeline') renderIncidents();
+    if (state.view === 'integrations') renderIntegrations();
     if (state.view === 'host') renderHost();
     if (state.view === 'containers') renderContainers();
     if (state.view === 'recorder') renderRecorder();

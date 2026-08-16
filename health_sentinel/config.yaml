@@ -1,6 +1,6 @@
 ---
 name: Health Sentinel
-version: "0.2.0"
+version: "0.3.0"
 slug: health_sentinel
 description: >-
   Black-box flight recorder for Home Assistant. Records health metrics, host
@@ -51,6 +51,10 @@ options:
   retention_rollup_days: 90
   disk_free_warn_pct: 10
   memory_warn_pct: 90
+  chronic_after_minutes: 60
+  cluster_window_seconds: 120
+  cluster_min_integrations: 3
+  cluster_min_entities: 2
   telegram_enabled: false
   telegram_bot_token: ""
   telegram_chat_id: ""
@@ -67,6 +71,10 @@ schema:
   retention_rollup_days: int(7,3650)
   disk_free_warn_pct: int(1,50)
   memory_warn_pct: int(50,99)
+  chronic_after_minutes: int(5,1440)
+  cluster_window_seconds: int(30,3600)
+  cluster_min_integrations: int(2,20)
+  cluster_min_entities: int(1,50)
   telegram_enabled: bool
   telegram_bot_token: password?
   telegram_chat_id: str?
