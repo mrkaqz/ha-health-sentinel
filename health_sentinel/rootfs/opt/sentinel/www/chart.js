@@ -187,12 +187,17 @@
       ctx.strokeStyle = colour;
       ctx.lineWidth = 1.6;
       ctx.lineJoin = 'round';
+      // Explicit every time, not just when a series wants one: setLineDash is
+      // canvas-context state, not per-stroke — leaving it set after a dashed
+      // series would silently dash every gridline and series drawn after it.
+      ctx.setLineDash(s.dash || []);
       ctx.beginPath();
       points.forEach(function (p, i) {
         var x = px(p[0]), y = py(p[1]);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
+      ctx.setLineDash([]);
 
       // Mark the most recent value so "now" is unambiguous.
       var last = points[points.length - 1];

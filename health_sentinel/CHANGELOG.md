@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.6
+
+**Fixed**
+
+- The "memory some" line on the Memory pressure (PSI) chart was invisible.
+  Series paint in array order, each one drawn over the last, and "memory
+  full" was listed after "memory some" — so on a lightly-loaded system, where
+  full (mathematically always <= some) sits at or near the same near-zero
+  value, the opaque red "full" line completely painted over the blue "some"
+  line beneath it. Reordered so "some" (the earlier warning indicator) draws
+  last, and "full" is now dashed and unfilled so it reads as a reference line
+  rather than silently vanishing under whichever series is nearest. `chart.js`
+  gained a per-series `dash` option, and always resets line-dash state after
+  each stroke — `setLineDash` is canvas-context state, not per-stroke, so a
+  dash left set would otherwise leak into every gridline and series drawn
+  after it.
+
 ## 0.3.5
 
 **Added**

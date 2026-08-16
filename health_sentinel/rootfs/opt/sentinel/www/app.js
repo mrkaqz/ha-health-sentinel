@@ -238,11 +238,21 @@
         threshold: 2500
       });
 
+      // "full" is mathematically always <= "some" (full requires every task
+      // stalled, some requires just one), so on a lightly-loaded system both
+      // sit near zero and nearly coincide. Draw order is paint order — the
+      // last series wins any pixel they share — so "some" (the earlier
+      // warning line, per the hint above) is drawn last, solid, on top.
+      // "full" is dashed and unfilled so it reads as a reference line rather
+      // than silently vanishing under whichever series happens to be nearest.
       Chart.draw($('chart-psi'), {
         series: [
-          { name: 'memory some', points: s['host.psi.memory.some.avg60'] || [] },
-          { name: 'memory full', points: s['host.psi.memory.full.avg60'] || [], color: '#f87171' },
-          { name: 'cpu some', points: s['host.psi.cpu.some.avg60'] || [], color: '#4ade80' }
+          { name: 'cpu some', points: s['host.psi.cpu.some.avg60'] || [], color: '#4ade80' },
+          {
+            name: 'memory full', points: s['host.psi.memory.full.avg60'] || [],
+            color: '#f87171', dash: [4, 3], fill: false
+          },
+          { name: 'memory some', points: s['host.psi.memory.some.avg60'] || [], color: '#38bdf8' }
         ],
         format: function (v) { return v.toFixed(0) + '%'; }
       });
