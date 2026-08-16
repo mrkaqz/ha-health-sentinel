@@ -1,0 +1,74 @@
+---
+name: Health Sentinel
+version: "0.1.0"
+slug: health_sentinel
+description: >-
+  Black-box flight recorder for Home Assistant. Records health metrics, host
+  kernel events and crash forensics from outside Core, so they survive the crash.
+url: https://github.com/mrkaqz/ha-health-sentinel
+arch:
+  - amd64
+  - aarch64
+
+# Start early so the recorder is already watching before heavy add-ons come up.
+init: false
+startup: services
+boot: auto
+
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:heart-pulse
+panel_title: Sentinel
+
+# If the sentinel itself wedges, let the Supervisor restart it.
+watchdog: http://[HOST]:[PORT:8099]/health
+
+# Everything below is ROLE_MANAGER or lower. No full_access, privileged,
+# host_pid, host_network, kernel_modules, devices or docker_api — protection
+# mode stays enabled.
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+
+map:
+  # For home-assistant.log.1 — the previous run's Core log. Mount path is
+  # stated explicitly rather than relying on the per-type default.
+  - type: homeassistant_config
+    read_only: true
+    path: /homeassistant
+  # For exporting incident bundles somewhere reachable over Samba.
+  - type: share
+    read_only: false
+    path: /share
+
+options:
+  probe_interval: 5
+  sample_interval: 15
+  slow_interval: 300
+  ring_buffer_minutes: 30
+  alert_core_down_after: 90
+  retention_raw_days: 7
+  retention_rollup_days: 90
+  disk_free_warn_pct: 10
+  memory_warn_pct: 90
+  telegram_enabled: false
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  webhook_url: ""
+  log_level: info
+
+schema:
+  probe_interval: int(2,60)
+  sample_interval: int(5,300)
+  slow_interval: int(60,3600)
+  ring_buffer_minutes: int(5,180)
+  alert_core_down_after: int(30,3600)
+  retention_raw_days: int(1,90)
+  retention_rollup_days: int(7,3650)
+  disk_free_warn_pct: int(1,50)
+  memory_warn_pct: int(50,99)
+  telegram_enabled: bool
+  telegram_bot_token: password?
+  telegram_chat_id: str?
+  webhook_url: str?
+  log_level: list(trace|debug|info|notice|warning|error|fatal)

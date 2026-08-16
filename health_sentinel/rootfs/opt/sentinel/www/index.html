@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Health Sentinel</title>
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="pulse" id="pulse"></span>
+      <h1>Health Sentinel</h1>
+    </div>
+    <div class="topbar-meta">
+      <span id="stream-host" class="stream" title="Host journal tail">journal</span>
+      <span id="stream-bus" class="stream" title="Core event bus">event bus</span>
+      <span id="uptime" class="muted"></span>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <nav class="tabs">
+    <button class="tab active" data-view="now">Now</button>
+    <button class="tab" data-view="timeline">Timeline</button>
+    <button class="tab" data-view="host">Host</button>
+    <button class="tab" data-view="containers">Containers</button>
+    <button class="tab" data-view="recorder">Recorder</button>
+    <button class="tab" data-view="logs">Logs</button>
+  </nav>
+
+  <main>
+    <!-- ------------------------------------------------------------- NOW -->
+    <section id="view-now" class="view active">
+      <div class="tiles" id="tiles"></div>
+
+      <div class="card">
+        <h2>Core responsiveness</h2>
+        <p class="hint">
+          Latency of a real request through to Core's event loop. A rising line
+          here is the classic signature in the minutes before a hang.
+        </p>
+        <canvas class="chart" id="chart-latency" height="160"></canvas>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2>Memory pressure (PSI)</h2>
+          <p class="hint">
+            Share of time tasks spent stalled waiting for memory. Unlike "RAM
+            used", this rising is what precedes an OOM kill.
+          </p>
+          <canvas class="chart" id="chart-psi" height="150"></canvas>
+        </div>
+        <div class="card">
+          <h2>Memory &amp; load</h2>
+          <canvas class="chart" id="chart-mem" height="150"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Recent events</h2>
+        <div id="recent-events" class="events"></div>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------------- TIMELINE -->
+    <section id="view-timeline" class="view">
+      <div class="card">
+        <h2>Incidents</h2>
+        <p class="hint">
+          Every gap in service the sentinel observed or reconstructed. Click one
+          to open its report.
+        </p>
+        <div id="incident-list" class="incident-list"></div>
+      </div>
+      <div id="incident-detail" class="card hidden"></div>
+    </section>
+
+    <!-- ------------------------------------------------------------ HOST -->
+    <section id="view-host" class="view">
+      <div class="grid-2">
+        <div class="card">
+          <h2>Host</h2>
+          <table class="kv" id="host-table"></table>
+        </div>
+        <div class="card">
+          <h2>Serial devices</h2>
+          <p class="hint">
+            Zigbee and Z-Wave coordinators live here. One of these disappearing
+            unavailables everything behind it.
+          </p>
+          <table class="data" id="serial-table"></table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Kernel &amp; hardware events</h2>
+        <p class="hint">
+          OOM kills, machine check errors, filesystem faults, USB drops — read
+          live from the host journal.
+        </p>
+        <div id="kernel-events" class="events"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------ CONTAINERS -->
+    <section id="view-containers" class="view">
+      <div class="card">
+        <h2>Containers</h2>
+        <p class="hint">
+          Sorted by memory. A positive growth figure means the container is
+          using more memory than it was an hour ago — that is a leak.
+        </p>
+        <table class="data" id="container-table"></table>
+      </div>
+    </section>
+
+    <!-- -------------------------------------------------------- RECORDER -->
+    <section id="view-recorder" class="view">
+      <div class="card">
+        <h2>Recorder database</h2>
+        <div class="tiles" id="recorder-tiles"></div>
+        <canvas class="chart" id="chart-db" height="150"></canvas>
+      </div>
+      <div class="card">
+        <h2>Top state-change entities</h2>
+        <p class="hint">
+          Every state change is a recorder write. These entities are what fill
+          the database.
+        </p>
+        <table class="data" id="writer-table"></table>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------------ LOGS -->
+    <section id="view-logs" class="view">
+      <div class="card">
+        <div class="log-controls">
+          <select id="log-source">
+            <option value="core">Home Assistant Core</option>
+            <option value="supervisor">Supervisor</option>
+            <option value="host">Host journal</option>
+          </select>
+          <input id="log-search" type="search" placeholder="Filter lines…">
+          <button id="log-refresh" class="btn">Refresh</button>
+        </div>
+        <pre id="log-output" class="log"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <button id="test-alert" class="btn subtle">Send test alert</button>
+    <span id="footer-note" class="muted"></span>
+  </footer>
+
+  <script src="static/chart.js"></script>
+  <script src="static/app.js"></script>
+</body>
+</html>

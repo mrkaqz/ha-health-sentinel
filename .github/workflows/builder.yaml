@@ -1,0 +1,60 @@
+---
+name: Build add-on
+
+# Only needed once you want prebuilt images. Until then the add-on builds on the
+# user's machine straight from the Dockerfile, which needs no CI at all.
+#
+# After the first successful run, add this to health_sentinel/config.yaml to
+# make installs pull the image instead of building locally:
+#
+#   image: ghcr.io/<owner>/health-sentinel-{arch}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "health_sentinel/**"
+      - ".github/workflows/builder.yaml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Matches the arch list in config.yaml. Official add-ons no longer ship
+        # armv7; add it back here and in config.yaml if you need it.
+        arch: [amd64, aarch64]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Read add-on version
+        id: meta
+        run: |
+          version=$(grep -oP '^version:\s*"?\K[^"]+' health_sentinel/config.yaml)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${version}"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target health_sentinel \
+            --image health-sentinel-{arch} \
+            --docker-hub ghcr.io/${{ github.repository_owner }} \
+            --addon

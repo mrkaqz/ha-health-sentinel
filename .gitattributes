@@ -1,0 +1,6 @@
+# Force LF everywhere. This repo is checked out on Windows but its contents run
+# inside a Linux container — a CRLF in run.sh breaks the shebang and the add-on
+# fails to start with "bad interpreter".
+* text=auto eol=lf
+
+*.png binary
