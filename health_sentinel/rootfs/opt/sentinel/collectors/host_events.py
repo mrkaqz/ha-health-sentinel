@@ -91,6 +91,25 @@ PATTERNS: tuple[Pattern, ...] = (
         "Block device I/O failure.",
     ),
     _p(
+        "usb_enumeration_error",
+        "error",
+        r"device not accepting address \d+"
+        r"|unable to enumerate USB device"
+        r"|device descriptor read/\d+, error"
+        r"|over-current (?:change|condition)"
+        r"|Cannot enable port \d+",
+        "A USB device failed to enumerate. This normally precedes the device "
+        "disappearing, so it is early warning that a coordinator is failing, "
+        "not just confirmation after the fact.",
+    ),
+    _p(
+        "usb_reset",
+        "warning",
+        r"reset (?:full|high|low|super)[- ]speed USB device",
+        "A USB device was reset. Occasional resets are routine; repeated ones "
+        "on the same port indicate a failing device, cable or power supply.",
+    ),
+    _p(
         "usb_disconnect",
         "warning",
         r"usb [\d.-]+: USB disconnect",
