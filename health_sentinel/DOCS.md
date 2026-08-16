@@ -32,7 +32,7 @@ Two things worth doing straight away:
 | **Host** | HAOS version and boot slot, serial devices, and the live kernel event feed. |
 | **Containers** | Per-add-on CPU and memory, sorted by memory, with growth slopes and restart counts. |
 | **Recorder** | Database size and the entities generating the most writes. |
-| **Logs** | Core, Supervisor, host journal and per-add-on logs with a filter. |
+| **Logs** | Core, Supervisor, host journal and per-add-on logs with a filter, plus file export. |
 
 ### Reading the "Now" view
 
@@ -65,6 +65,37 @@ shows up.
 classified events, add-on states at the moment of the incident, and the relevant
 log excerpts including the previous boot's journal. It is self-contained, so it
 stays useful after the machine has been rebuilt.
+
+## Exporting logs for AI analysis
+
+The **Logs** view has two download buttons.
+
+**Download this log** saves whatever is currently selected — the chosen source,
+with your filter applied — as a `.log` file.
+
+**Full diagnostic** is the one to reach for when something has gone wrong. It
+produces a single plain-text file containing:
+
+- a short reading guide, so an AI knows what it is looking at
+- system facts: HAOS version, boot slot, kernel, disk, disk wear, uptime
+- every current metric, including PSI
+- incident history with the verdict reached for each
+- all classified kernel, hardware and add-on events
+- container CPU, memory and memory-growth rates
+- the Core log, Supervisor log and host journal
+- the logs of any add-on currently in a bad state
+
+Plain text rather than an archive, deliberately — you can upload the file
+straight into a chat with an AI assistant and ask what killed Home Assistant, no
+extraction step.
+
+The reason the extra context matters: **Core's log ends at the moment Core
+dies**, so for a hard crash the cause is usually not in it. The answer is
+normally in the host journal or the kernel events at the same timestamp, and an
+AI given only the Core log cannot see that. The export puts them side by side.
+
+Logs of add-ons that are running normally are left out on purpose. Including all
+thirty-odd would bury the signal.
 
 ## Telegram alerts
 

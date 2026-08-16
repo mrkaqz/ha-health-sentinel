@@ -293,6 +293,10 @@ table.kv td:first-child { color: var(--muted); width: 42%; }
 .btn:hover { filter: brightness(1.08); }
 .btn.subtle { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
 
+/* The download controls are anchors, not buttons, so they need the button look
+   applied and link styling stripped. */
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+
 footer {
   display: flex; align-items: center; gap: 12px;
   padding: 14px 20px 28px; max-width: 1200px; margin: 0 auto;

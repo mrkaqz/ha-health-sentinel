@@ -467,12 +467,37 @@
     var url = 'api/logs?lines=600&source=' + encodeURIComponent(source);
     if (search) url += '&search=' + encodeURIComponent(search);
 
+    updateDownloadLinks(source, search);
+
     $('log-output').textContent = 'Loading…';
     get(url).then(function (data) {
       $('log-output').textContent = data.text || '(empty)';
     }).catch(function (err) {
       $('log-output').textContent = 'Could not load logs: ' + err.message;
     });
+  }
+
+  function stamp() {
+    var d = new Date();
+    function p(n) { return String(n).padStart(2, '0'); }
+    return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+           '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+  }
+
+  // Plain anchors rather than a fetch-and-Blob download: the dashboard runs
+  // inside the Home Assistant ingress iframe, where script-initiated blob
+  // downloads can be blocked but a normal link with Content-Disposition is not.
+  function updateDownloadLinks(source, search) {
+    var single = 'api/logs/export?lines=5000&source=' + encodeURIComponent(source);
+    if (search) single += '&search=' + encodeURIComponent(search);
+
+    var one = $('log-download');
+    one.href = single;
+    one.setAttribute('download', 'ha-' + source + '-' + stamp() + '.log');
+
+    var all = $('log-download-full');
+    all.href = 'api/logs/export?full=1&lines=3000';
+    all.setAttribute('download', 'ha-diagnostic-' + stamp() + '.txt');
   }
 
   // -------------------------------------------------------------- driver

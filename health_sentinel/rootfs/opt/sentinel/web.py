@@ -60,6 +60,7 @@ def create_app(sentinel: "Sentinel") -> aioweb.Application:
             aioweb.get("/api/host", handle_host),
             aioweb.get("/api/recorder", handle_recorder),
             aioweb.get("/api/logs", handle_logs),
+            aioweb.get("/api/logs/export", handle_logs_export),
             aioweb.post("/api/test-alert", handle_test_alert),
             aioweb.get("/", handle_index),
         ]
@@ -296,6 +297,211 @@ async def handle_logs(request: aioweb.Request) -> aioweb.Response:
         )
 
     return _json({"source": source, "text": text})
+
+
+async def handle_logs_export(request: aioweb.Request) -> aioweb.Response:
+    """Download logs as one plain-text file, ready to hand to an AI.
+
+    Plain text rather than the tar.gz incident bundle on purpose: a single file
+    can be uploaded or pasted straight into a chat, with no extraction step.
+
+    `full=1` gathers every source plus the system context an analyst would
+    otherwise have to ask for — versions, current metrics, incident history and
+    the sentinel's own classified kernel events. Raw logs alone lack the context
+    to interpret them.
+    """
+    sentinel: "Sentinel" = request.app["sentinel"]
+    source = request.query.get("source", "core")
+    full = request.query.get("full", "") in ("1", "true", "yes")
+    lines = min(int(request.query.get("lines", "2000")), 20000)
+    search = request.query.get("search", "").strip()
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if full:
+        text = await _build_full_export(sentinel, lines)
+        filename = f"ha-diagnostic-{stamp}.txt"
+    else:
+        text = await _build_single_export(sentinel, source, lines, search)
+        filename = f"ha-{source.replace(':', '-')}-{stamp}.log"
+
+    return aioweb.Response(
+        text=text,
+        content_type="text/plain",
+        charset="utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _section(title: str) -> str:
+    return f"\n\n{'=' * 78}\n== {title}\n{'=' * 78}\n"
+
+
+async def _fetch_log(sentinel: "Sentinel", source: str, lines: int) -> str:
+    if source.startswith("addon:"):
+        return await sentinel.client.addon_log(source.split(":", 1)[1], lines)
+    if source in _LOG_SOURCES:
+        return await sentinel.client.try_get_text(_LOG_SOURCES[source], lines)
+    return ""
+
+
+async def _build_single_export(
+    sentinel: "Sentinel", source: str, lines: int, search: str
+) -> str:
+    text = await _fetch_log(sentinel, source, lines)
+    if search:
+        needle = search.lower()
+        text = "\n".join(l for l in text.splitlines() if needle in l.lower())
+
+    header = [
+        f"# Home Assistant log export — {source}",
+        f"# Generated {time.strftime('%Y-%m-%d %H:%M:%S %z')}",
+        f"# Last {lines} lines" + (f", filtered by '{search}'" if search else ""),
+        "",
+    ]
+    return "\n".join(header) + text
+
+
+async def _build_full_export(sentinel: "Sentinel", lines: int) -> str:
+    now = int(time.time())
+    out: list[str] = []
+
+    out.append(
+        "HOME ASSISTANT DIAGNOSTIC EXPORT\n"
+        f"Generated {time.strftime('%Y-%m-%d %H:%M:%S %z')} by Health Sentinel\n"
+        "\n"
+        "This file is intended to be read by a person or an AI assistant to\n"
+        "diagnose instability. Suggested order of reading:\n"
+        "\n"
+        "  1. INCIDENTS      - what already went wrong, and the verdict reached\n"
+        "  2. KERNEL EVENTS  - OOM kills, hardware errors, USB drops, disk faults.\n"
+        "                      A kernel OOM kill here explains a Core death that\n"
+        "                      the Core log itself will show no reason for.\n"
+        "  3. SYSTEM         - versions, memory, disk, pressure at export time\n"
+        "  4. CONTAINERS     - which add-on is consuming or leaking memory\n"
+        "  5. LOGS           - Core, Supervisor and host journal\n"
+        "\n"
+        "Note on ordering: Core's log ends when Core dies, so the cause of a hard\n"
+        "crash is usually NOT in it. Check the host journal and kernel events for\n"
+        "the same timestamp."
+    )
+
+    # ---- system ----------------------------------------------------------
+    host = sentinel.live.get("host", {}) or {}
+    os_info = sentinel.live.get("os", {}) or {}
+    metrics = sentinel.live.get("metrics", {}) or {}
+    core = sentinel.live.get("core", {}) or {}
+
+    out.append(_section("SYSTEM"))
+    facts = [
+        ("Hostname", host.get("hostname")),
+        ("Operating system", host.get("operating_system")),
+        ("HAOS version", os_info.get("version")),
+        ("Boot slot", os_info.get("boot")),
+        ("Board", os_info.get("board")),
+        ("Kernel", host.get("kernel")),
+        ("Disk used / total (GB)", f"{host.get('disk_used')} / {host.get('disk_total')}"),
+        ("Disk lifetime used (%)", host.get("disk_life_time")),
+        ("Host uptime (s)", metrics.get("host.uptime_seconds")),
+        ("Core reachable", core.get("reachable")),
+        ("Core latency (ms)", core.get("latency_ms")),
+        ("Sentinel uptime", sentinel.uptime()),
+        ("PSI available", sentinel.capabilities.get("proc_psi")),
+    ]
+    for label, value in facts:
+        if value not in (None, ""):
+            out.append(f"{label:<26} {value}")
+
+    out.append("\nCurrent metrics:")
+    for key in sorted(metrics):
+        out.append(f"  {key:<40} {metrics[key]}")
+
+    # ---- incidents -------------------------------------------------------
+    out.append(_section("INCIDENTS (most recent first)"))
+    incidents = await sentinel.storage.aquery(
+        "SELECT id, started_ts, ended_ts, classification, summary FROM incidents "
+        "ORDER BY started_ts DESC LIMIT 30"
+    )
+    if not incidents:
+        out.append("None recorded.")
+    for incident in incidents:
+        started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(incident["started_ts"]))
+        duration = (
+            f"{incident['ended_ts'] - incident['started_ts']}s"
+            if incident.get("ended_ts")
+            else "ONGOING"
+        )
+        out.append(
+            f"\n#{incident['id']}  {started}  [{incident['classification']}]  "
+            f"duration={duration}\n    {incident['summary']}"
+        )
+
+    # ---- classified events ----------------------------------------------
+    out.append(_section("KERNEL, HARDWARE AND ADD-ON EVENTS (most recent first)"))
+    events = await sentinel.storage.aquery(
+        "SELECT ts, kind, severity, source, message FROM events "
+        "WHERE severity IN ('critical', 'error', 'warning') "
+        "ORDER BY ts DESC LIMIT 400"
+    )
+    if not events:
+        out.append("None recorded.")
+    for event in events:
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(event["ts"]))
+        out.append(
+            f"{when}  {event['severity'].upper():<8} {event['kind']:<18} "
+            f"{event['message']}"
+        )
+
+    # ---- containers ------------------------------------------------------
+    out.append(_section("CONTAINER RESOURCE USE"))
+    since = now - 6 * 3600
+    containers = await sentinel.storage.aquery(
+        """SELECT cs.* FROM container_samples cs
+           JOIN (SELECT slug, MAX(ts) AS ts FROM container_samples
+                  WHERE ts >= ? GROUP BY slug) newest
+             ON cs.slug = newest.slug AND cs.ts = newest.ts""",
+        (since,),
+    )
+    out.append(
+        f"{'add-on':<34}{'cpu%':>8}{'memory MB':>12}{'mem%':>8}{'MB/h':>10}"
+        f"{'restarts':>10}"
+    )
+    restarts = sentinel.addons.restart_counts
+    for row in sorted(containers, key=lambda r: r.get("mem_bytes") or 0, reverse=True):
+        slope = await asyncio.to_thread(
+            sentinel.storage.memory_slope, row["slug"], since
+        )
+        megabytes = (row.get("mem_bytes") or 0) / (1024 * 1024)
+        out.append(
+            f"{sentinel.addons.name_for(row['slug'])[:33]:<34}"
+            f"{row.get('cpu') or 0:>8.2f}{megabytes:>12.1f}"
+            f"{row.get('mem_percent') or 0:>8.1f}"
+            f"{(slope if slope is not None else 0):>10.1f}"
+            f"{restarts.get(row['slug'], 0):>10}"
+        )
+
+    # ---- logs ------------------------------------------------------------
+    for source, label in (
+        ("core", "HOME ASSISTANT CORE LOG"),
+        ("supervisor", "SUPERVISOR LOG"),
+        ("host", "HOST JOURNAL"),
+    ):
+        out.append(_section(f"{label} (last {lines} lines)"))
+        text = await _fetch_log(sentinel, source, lines)
+        out.append(text.strip() or "(empty or unavailable)")
+
+    # Only add-ons that are currently unhealthy — including all 30-odd logs
+    # would bury the signal and make the file unusable.
+    unhealthy = [
+        addon
+        for addon in sentinel.addons.snapshot()
+        if addon["state"] not in ("started", "stopped")
+    ]
+    for addon in unhealthy[:5]:
+        out.append(_section(f"ADD-ON LOG: {addon['name']} (state={addon['state']})"))
+        text = await _fetch_log(sentinel, f"addon:{addon['slug']}", 300)
+        out.append(text.strip() or "(empty or unavailable)")
+
+    return "\n".join(out) + "\n"
 
 
 async def handle_test_alert(request: aioweb.Request) -> aioweb.Response:

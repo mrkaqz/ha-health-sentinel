@@ -144,7 +144,16 @@
           </select>
           <input id="log-search" type="search" placeholder="Filter lines…">
           <button id="log-refresh" class="btn">Refresh</button>
+          <a id="log-download" class="btn subtle" download>Download this log</a>
+          <a id="log-download-full" class="btn" download>Full diagnostic ⭳</a>
         </div>
+        <p class="hint">
+          <strong>Full diagnostic</strong> bundles every log with the system
+          context needed to interpret them — versions, current metrics, incident
+          history, container memory, and the classified kernel events. It is
+          plain text, so you can hand the file straight to an AI assistant and
+          ask what killed Home Assistant.
+        </p>
         <pre id="log-output" class="log"></pre>
       </div>
     </section>

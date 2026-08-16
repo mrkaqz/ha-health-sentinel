@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- Log export from the Logs view. **Download this log** saves the current source
+  with its filter applied; **Full diagnostic** produces one plain-text file
+  combining every log with the context needed to interpret it — versions,
+  current metrics, incident history, classified kernel events, container memory
+  and growth rates, and the logs of any add-on in a bad state.
+- The export opens with a reading guide, including the point that Core's log
+  ends when Core dies, so a hard crash is usually explained by the host journal
+  at the same timestamp rather than by Core itself.
+- Plain text rather than an archive, so the file can go straight to an AI
+  assistant with no extraction step.
+
 ## 0.1.0
 
 First release.
