@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.4
+
+**Fixed**
+
+- Recorder database size still never appeared, even after 0.3.2's fix. The
+  0.3.2 defensive logging did its job and pointed straight at the real cause:
+  the confirming `result` for `system_health/info` was empty (`shape=[]`) on
+  every call. Turns out `system_health/info` is not a request/response
+  command — it is a subscription, exactly like `subscribe_events`. Home
+  Assistant confirms it with `send_result(msg["id"])` and no payload; the
+  actual data streams in afterward as an `event` message reusing the same id.
+  `_handle()` routed every incoming `event` straight to the state_changed
+  handler regardless of which subscription produced it, so system_health's
+  real data was silently discarded no matter how correctly the empty result
+  was parsed. Incoming events are now routed by which subscription their id
+  belongs to, and the subscription is unsubscribed once its one-shot info
+  request finishes, so a long-running connection doesn't accumulate open
+  subscriptions on Core's side.
+
 ## 0.3.3
 
 **Fixed**

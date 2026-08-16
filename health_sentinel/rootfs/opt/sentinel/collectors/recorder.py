@@ -56,9 +56,16 @@ class RecorderWatcher:
         self._availability = availability
         self._on_cluster = on_cluster
         # Result messages carry only an id, so remember what each id asked for.
-        # Without this every successful result was fed to the system-health
-        # handler regardless of what it actually was.
         self._pending: dict[int, str] = {}
+        # system_health/info and subscribe_events are *subscriptions*, not
+        # request/response: their confirming "result" carries no payload, and
+        # the real data streams in afterward as "event" messages reusing the
+        # same id — exactly like subscribe_events -> state_changed. Without
+        # this map, every incoming "event" was routed to the state_changed
+        # handler unconditionally, so system_health's actual data (arriving
+        # as its own "event") was silently discarded no matter how the
+        # "result" message itself was parsed.
+        self._subscriptions: dict[int, str] = {}
         self._registry_available: bool | None = None
 
         self._counts: Counter[str] = Counter()
@@ -140,6 +147,11 @@ class RecorderWatcher:
 
     async def _session(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, sock_read=None)
+        # Old subscription ids meant nothing to a fresh connection anyway, but
+        # a stale entry (e.g. from a health request whose "finish" never
+        # arrived before a reconnect) would otherwise sit there forever.
+        self._subscriptions = {}
+
         async with self._client.session.ws_connect(
             self._ws_url, timeout=timeout, heartbeat=30
         ) as ws:
@@ -167,7 +179,7 @@ class RecorderWatcher:
             async for message in ws:
                 if message.type != aiohttp.WSMsgType.TEXT:
                     break
-                await self._handle(json.loads(message.data))
+                await self._handle(ws, json.loads(message.data))
 
                 self._maybe_roll_window()
                 if time.time() - last_health > 300:
@@ -203,15 +215,30 @@ class RecorderWatcher:
 
     # -------------------------------------------------------------- handling
 
-    async def _handle(self, message: dict[str, Any]) -> None:
+    async def _handle(
+        self, ws: aiohttp.ClientWebSocketResponse, message: dict[str, Any]
+    ) -> None:
         kind = message.get("type")
+        msg_id = message.get("id")
+
         if kind == "event":
-            await self._handle_event(message.get("event") or {})
+            # subscribe_events and system_health/info are both subscriptions:
+            # their confirming "result" is empty, and the real payload streams
+            # in afterward as "event" messages that reuse the request's id.
+            # Route by which subscription that id belongs to — an id this
+            # connection never subscribed under (e.g. left over after a
+            # reconnect) is simply ignored.
+            sub_kind = self._subscriptions.get(msg_id)
+            if sub_kind == "state_changed":
+                await self._handle_event(message.get("event") or {})
+            elif sub_kind == "health":
+                await self._handle_health_event(ws, msg_id, message.get("event") or {})
             return
+
         if kind != "result":
             return
 
-        what = self._pending.pop(message.get("id"), None)
+        what = self._pending.pop(msg_id, None)
         if not message.get("success"):
             if what == "registry":
                 # Registry commands may require admin. Not fatal — main.py has a
@@ -223,8 +250,8 @@ class RecorderWatcher:
                     (message.get("error") or {}).get("code", "unknown"),
                 )
             elif what is not None:
-                # health/states failing wholesale — log every case, not just
-                # the one we happen to have a fallback for.
+                # health/states/subscribe failing wholesale — log every case,
+                # not just the one we happen to have a fallback for.
                 _LOGGER.warning(
                     "Websocket request %r failed: %s",
                     what,
@@ -232,13 +259,47 @@ class RecorderWatcher:
                 )
             return
 
+        # subscribe_events and system_health/info confirm with an EMPTY
+        # result — send_result(msg["id"]) with no second argument on the HA
+        # side. There is nothing to parse here; the id just becomes a live
+        # subscription that future "event" messages will be routed through.
+        if what in ("subscribe", "health"):
+            self._subscriptions[msg_id] = (
+                "state_changed" if what == "subscribe" else "health"
+            )
+            return
+
         result = message.get("result")
-        if what == "health":
-            self._handle_system_health(result or {})
-        elif what == "registry":
+        if what == "registry":
             self._handle_registry(result or [])
         elif what == "states":
             self._handle_states(result or [])
+
+    async def _handle_health_event(
+        self, ws: aiohttp.ClientWebSocketResponse, msg_id: int, event: dict[str, Any]
+    ) -> None:
+        """One message from the system_health/info subscription's stream.
+
+        Sequence per subscription: exactly one "initial" event carrying every
+        domain's synchronously-available data (recorder's is — it is a plain
+        dict, never a coroutine, so it is always present here, never only in
+        a later "update"), zero or more "update" events as slow domains like
+        solcast_solar or hacs finish their own network checks, then "finish".
+        """
+        etype = event.get("type")
+        if etype == "initial":
+            self._handle_system_health(event)
+        elif etype == "finish":
+            # A fresh subscription id is requested every _request_db_size()
+            # call (every 300s in the read loop); leaving each one open on
+            # Core's side after we're done with it would leak subscriptions
+            # over a long-running connection.
+            self._subscriptions.pop(msg_id, None)
+            await self._send(
+                ws, {"type": "unsubscribe_events", "subscription": msg_id}, "unsub"
+            )
+        # "update" events (a slow domain's own check finishing) carry nothing
+        # about the recorder, which is never one of those — nothing to do.
 
     def _handle_registry(self, entries: list[dict[str, Any]]) -> None:
         if self._availability is None:

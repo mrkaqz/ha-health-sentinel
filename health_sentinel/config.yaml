@@ -1,6 +1,6 @@
 ---
 name: Health Sentinel
-version: "0.3.3"
+version: "0.3.4"
 slug: health_sentinel
 description: >-
   Black-box flight recorder for Home Assistant. Records health metrics, host

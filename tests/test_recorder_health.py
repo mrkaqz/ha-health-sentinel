@@ -1,16 +1,31 @@
-"""system_health/info response parsing tests.
+"""system_health/info response parsing AND routing tests.
 
 Run with: python tests/test_recorder_health.py
 
-The fixture below is the ACTUAL shape returned by a live Home Assistant
-instance, captured while diagnosing a bug where the previous implementation
-read result["recorder"] directly. The real key is result["data"]["recorder"] —
-the command wraps everything as {"type": "initial", "data": {...}}. The old
-code returned silently on every call: no exception, stable connection, and
-"database size" simply stayed blank forever with nothing in the logs to say
-why. This is why the fixture is copied verbatim rather than simplified.
+Two bugs, found in sequence against a live instance, both hiding behind the
+same symptom: "database size" was always blank, connection stayed healthy,
+nothing in the logs.
+
+Bug 1 (fixed first): _handle_system_health read result["recorder"] directly.
+The real key is result["data"]["recorder"].
+
+Bug 2 (found once bug 1's own defensive logging reported "shape=[]" — an
+empty result — instead of silence): system_health/info is not a simple
+request/response command, it is a SUBSCRIPTION. Home Assistant's own handler
+confirms with `connection.send_result(msg["id"])` — no payload — and the real
+data streams in afterward as a separate "event" message reusing the same id,
+exactly like subscribe_events -> state_changed. The old _handle() routed every
+incoming "event" straight to the state_changed handler regardless of which
+subscription it belonged to, so system_health's actual data was silently
+discarded no matter how correctly bug 1's fix parsed the (empty) result.
+
+The REAL_FIXTURE below is captured from a live instance's system_health/info
+response and is reused for both the parsing tests (unit-level, direct calls to
+_handle_system_health) and the routing tests (integration-level, the real
+message sequence through _handle()).
 """
 
+import asyncio
 import logging
 import os
 import sys
@@ -77,6 +92,47 @@ def make_watcher() -> RecorderWatcher:
     return RecorderWatcher(FakeClient(), token="x")  # type: ignore[arg-type]
 
 
+class FakeWebSocket:
+    """Records outgoing sends; that's all _handle needs from a real ws."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+
+
+async def _drive_health_subscription(watcher: RecorderWatcher, ws: FakeWebSocket) -> None:
+    """The real message sequence Core sends for one system_health/info call.
+
+    Mirrors exactly what a live instance sends: the confirming "result" is
+    empty, then an "event" carrying the actual data, then a "finish" event.
+    Going through watcher._handle() (not calling _handle_system_health
+    directly) is the point — it is the routing between these two message
+    kinds that was broken, not the parsing of either one alone.
+    """
+    request_id = watcher._msg_id + 1
+    await watcher._send(ws, {"type": "system_health/info"}, "health")
+
+    # 1. The confirming result: success, no payload.
+    await watcher._handle(ws, {"id": request_id, "type": "result", "success": True})
+
+    # 2. The real data, as an "event" reusing the request's id.
+    await watcher._handle(
+        ws,
+        {
+            "id": request_id,
+            "type": "event",
+            "event": {"type": "initial", "data": REAL_FIXTURE["data"]},
+        },
+    )
+
+    # 3. Recorder health has nothing async, so "finish" follows immediately.
+    await watcher._handle(
+        ws, {"id": request_id, "type": "event", "event": {"type": "finish"}}
+    )
+
+
 results = []
 
 
@@ -85,8 +141,82 @@ def check(name, condition, detail=""):
     print(f"{'PASS' if condition else 'FAIL'}  {name}" + (f"  [{detail}]" if detail else ""))
 
 
-def main() -> int:
+async def main() -> int:
     logging.basicConfig(level=logging.CRITICAL)  # keep test output clean
+
+    # ============================================================
+    # ROUTING tests — the real message sequence, through _handle().
+    # This is the layer that was actually broken: bug 1's parsing was
+    # correct from the start, it just never received real data because
+    # every "event" message was routed to the state_changed handler
+    # regardless of which subscription produced it.
+    # ============================================================
+
+    watcher = make_watcher()
+    ws = FakeWebSocket()
+    await _drive_health_subscription(watcher, ws)
+    expected_bytes = 82363.42 * 1024 * 1024
+    check(
+        "routing: db size arrives via the real result->event->finish sequence",
+        watcher.db_size_bytes is not None
+        and abs(watcher.db_size_bytes - expected_bytes) < 1.0,
+        f"got={watcher.db_size_bytes}",
+    )
+    check(
+        "routing: unsubscribe sent after finish",
+        any(m.get("type") == "unsubscribe_events" for m in ws.sent),
+        f"sent={ws.sent}",
+    )
+    check(
+        "routing: subscription entry cleaned up after finish",
+        len(watcher._subscriptions) == 0,
+        f"remaining={watcher._subscriptions}",
+    )
+
+    # An "event" whose id was never confirmed as a health subscription (e.g.
+    # left over after a reconnect) must be ignored, not crash and not be
+    # mistaken for a state_changed event.
+    watcher = make_watcher()
+    ws = FakeWebSocket()
+    await watcher._handle(
+        ws,
+        {"id": 999, "type": "event", "event": {"type": "initial", "data": REAL_FIXTURE["data"]}},
+    )
+    check(
+        "routing: an event for an unknown subscription id is ignored",
+        watcher.db_size_bytes is None,
+    )
+
+    # state_changed routing must still work, gated by its own subscription id,
+    # and must not be confused with a health event using a different id.
+    watcher = make_watcher()
+    ws = FakeWebSocket()
+    await watcher._send(ws, {"type": "subscribe_events"}, "subscribe")
+    await watcher._handle(ws, {"id": 1, "type": "result", "success": True})
+    await watcher._handle(
+        ws,
+        {
+            "id": 1,
+            "type": "event",
+            "event": {
+                "event_type": "state_changed",
+                "data": {
+                    "entity_id": "sensor.x",
+                    "old_state": {"state": "1"},
+                    "new_state": {"state": "2"},
+                },
+            },
+        },
+    )
+    check(
+        "routing: state_changed events still counted via their own subscription",
+        watcher._counts.get("sensor.x") == 1,
+    )
+
+    # ============================================================
+    # PARSING tests — _handle_system_health called directly, isolating the
+    # shape-handling logic from the subscription routing above.
+    # ============================================================
 
     # --- the real shape, wrapped in {"type": "initial", "data": {...}} ---
     watcher = make_watcher()
@@ -159,4 +289,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(asyncio.run(main()))
