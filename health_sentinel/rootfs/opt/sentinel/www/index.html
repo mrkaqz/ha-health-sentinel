@@ -95,7 +95,7 @@
       <div class="card">
         <h2>Integration health</h2>
         <p class="hint" id="mapping-note"></p>
-        <table class="data" id="integration-table"></table>
+        <div class="table-wrap"><table class="data" id="integration-table"></table></div>
       </div>
 
       <div class="card">
@@ -104,7 +104,7 @@
           Entities that have been unavailable long enough to count as broken
           rather than blipping. These are excluded from outage detection.
         </p>
-        <table class="data" id="chronic-table"></table>
+        <div class="table-wrap"><table class="data" id="chronic-table"></table></div>
       </div>
     </section>
 
@@ -113,7 +113,7 @@
       <div class="grid-2">
         <div class="card">
           <h2>Host</h2>
-          <table class="kv" id="host-table"></table>
+          <div class="table-wrap"><table class="kv" id="host-table"></table></div>
         </div>
         <div class="card">
           <h2>Serial devices</h2>
@@ -121,7 +121,7 @@
             Zigbee and Z-Wave coordinators live here. One of these disappearing
             unavailables everything behind it.
           </p>
-          <table class="data" id="serial-table"></table>
+          <div class="table-wrap"><table class="data" id="serial-table"></table></div>
         </div>
       </div>
       <div class="card">
@@ -131,7 +131,7 @@
           shown: they are namespaced per container, and reading the host's would
           need privileges this add-on deliberately does not take.
         </p>
-        <table class="data" id="network-table"></table>
+        <div class="table-wrap"><table class="data" id="network-table"></table></div>
       </div>
 
       <div class="card">
@@ -152,7 +152,7 @@
           Sorted by memory. A positive growth figure means the container is
           using more memory than it was an hour ago — that is a leak.
         </p>
-        <table class="data" id="container-table"></table>
+        <div class="table-wrap"><table class="data" id="container-table"></table></div>
       </div>
     </section>
 
@@ -169,7 +169,7 @@
           Every state change is a recorder write. These entities are what fill
           the database.
         </p>
-        <table class="data" id="writer-table"></table>
+        <div class="table-wrap"><table class="data" id="writer-table"></table></div>
       </div>
     </section>
 

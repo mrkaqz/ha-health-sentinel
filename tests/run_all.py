@@ -14,6 +14,7 @@ MODULES = [
     "test_export.py",
     "test_web_assets.py",
     "test_recorder_health.py",
+    "test_live_metrics.py",
 ]
 
 

@@ -192,20 +192,36 @@ class CoreProbe:
                 timeout=_TEMPLATE_TIMEOUT,
             ) as response:
                 if response.status != 200:
+                    body = (await response.text())[:300]
+                    _LOGGER.warning(
+                        "Entity census template returned HTTP %s: %s",
+                        response.status,
+                        body,
+                    )
                     return {}
                 rendered = (await response.text()).strip()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            _LOGGER.debug("Entity census failed: %s", err)
+            # Not just debug — this is the only source of core.entities.* and
+            # its silent failure was previously indistinguishable from the
+            # unrelated bug that discarded these metrics after they arrived.
+            _LOGGER.warning("Entity census request failed: %s", err)
             return {}
 
         parts = rendered.split("|")
         if len(parts) < 3:
+            _LOGGER.warning(
+                "Entity census template returned an unexpected shape: %r",
+                rendered[:200],
+            )
             return {}
         try:
             total = float(parts[0])
             unavailable = float(parts[1])
             automations_on = float(parts[2])
         except ValueError:
+            _LOGGER.warning(
+                "Entity census template returned non-numeric values: %r", parts
+            )
             return {}
 
         metrics = {

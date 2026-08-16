@@ -46,6 +46,22 @@ _HEARTBEAT_INTERVAL = 30
 _MAINTENANCE_INTERVAL = 900
 
 
+def merge_live_metrics(live: dict[str, Any], metrics: dict[str, float]) -> None:
+    """Fold one loop's metrics into the shared live-state dict.
+
+    Must always merge, never replace. Two independent loops write into
+    live["metrics"] at different cadences (every ~15s and every
+    slow_interval, default 300s) with disjoint key prefixes. A plain
+    `live["metrics"] = metrics` from either loop discards whatever the other
+    loop last wrote — which is exactly what happened here: the fast loop's
+    replace wiped out the slow loop's disk/entity-census/network/integration
+    keys within 15s of every slow-loop write, leaving them missing for the
+    remaining ~95% of each cycle. One shared function means both loops are
+    physically unable to diverge back into that bug.
+    """
+    live.setdefault("metrics", {}).update(metrics)
+
+
 class Sentinel:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -236,7 +252,7 @@ class Sentinel:
             await self.storage.awrite_samples(ts, metrics)
             await self.storage.awrite_container_samples(ts, rows)
 
-            self.live["metrics"] = metrics
+            merge_live_metrics(self.live, metrics)
             self.live["containers"] = rows
             self.live["ts"] = ts
 
@@ -286,7 +302,7 @@ class Sentinel:
                 self.availability.persistable_states(),
             )
 
-            self.live.setdefault("metrics", {}).update(metrics)
+            merge_live_metrics(self.live, metrics)
             self.live["top_writers"] = self.recorder.top_writers()
             self.live["network"] = self.network.state
             self.live["integrations"] = self.availability.integration_health()

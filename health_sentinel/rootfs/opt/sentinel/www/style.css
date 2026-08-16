@@ -138,14 +138,24 @@ main { padding: 18px; max-width: 1200px; margin: 0 auto; }
   padding: 16px;
   margin-bottom: 16px;
   box-shadow: var(--shadow);
+  /* Defensive: a flex/grid parent's tracks default to an auto minimum, so
+     without this a long unbroken string inside the card (a device path, a
+     URL) can force the track — and the page — wider than the viewport. */
+  min-width: 0;
 }
 .card h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
 
 .hint { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
 .muted { color: var(--muted); }
 
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 820px) { .grid-2 { grid-template-columns: 1fr; } }
+/* minmax(0, 1fr), not bare 1fr: a plain fr track has an implicit min-width of
+   auto, so a long unbroken token (a /dev/serial/by-id path, with no spaces to
+   wrap at) forces the whole track — and the page — wider instead of being
+   contained by the child's own overflow-x:auto. This is the single-column
+   case too: at width <=820 there is one 1fr track, and it has the exact same
+   auto-minimum problem, just with nothing beside it to blame. */
+.grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 820px) { .grid-2 { grid-template-columns: minmax(0, 1fr); } }
 
 /* --------------------------------------------------------------- tiles */
 
@@ -175,13 +185,30 @@ main { padding: 18px; max-width: 1200px; margin: 0 auto; }
 
 /* -------------------------------------------------------------- tables */
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Tables scroll inside their own box rather than blowing out the page — a
+   6-column resource table cannot fit a 375px phone at readable font sizes, and
+   the wrapper contains that instead of pushing the whole layout sideways. */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:last-child td { border-bottom: none; }
 
+@media (max-width: 480px) {
+  table { font-size: 12px; }
+  th, td { padding: 6px 6px; }
+}
+
+/* A label:value layout reads better wrapped than horizontally scrolled —
+   unlike a data grid, alignment across rows isn't the point here. */
+table.kv { white-space: normal; table-layout: fixed; }
 table.kv td:first-child { color: var(--muted); width: 42%; }
+table.kv td:last-child { word-break: break-word; }
 .mono { font-family: var(--mono); font-size: 12px; }
 
 .leak { color: var(--warn); font-weight: 600; }

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.3
+
+**Fixed**
+
+- "Disk Free" and "Unavailable entities" showed `—` most of the time. The fast
+  loop (every ~15s) replaced the entire live-metrics dict on every tick, while
+  the slow loop (every `slow_interval`, default 300s) merged its own keys in —
+  disk usage, entity census, network state, integration health. The next fast
+  tick, at most 15s later, discarded them, leaving them missing for roughly
+  95% of every 5-minute cycle. Both loops now go through one shared merge
+  function, so they cannot diverge back into this.
+- The entity-census template (source of "Unavailable entities") failed
+  silently on a non-200 response, a request error, or an unexpected render
+  shape. All three now log what actually happened.
+- Tables overflowed the page on narrow screens instead of scrolling in place.
+  Every table is now wrapped in its own horizontally-scrollable container, and
+  a CSS Grid trap that defeated it on the Host tab — a bare `1fr` track has an
+  implicit `auto` minimum, so a long unbroken string (a `/dev/serial/by-id`
+  path) forced the whole track, and the page, wider than the viewport — is
+  fixed with `minmax(0, 1fr)` plus a defensive `min-width: 0` on cards.
+
 ## 0.3.2
 
 **Fixed**
