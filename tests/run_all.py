@@ -13,6 +13,7 @@ MODULES = [
     "test_availability.py",
     "test_export.py",
     "test_web_assets.py",
+    "test_recorder_health.py",
 ]
 
 

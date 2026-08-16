@@ -222,6 +222,14 @@ class RecorderWatcher:
                     "integration mapping will use the template fallback",
                     (message.get("error") or {}).get("code", "unknown"),
                 )
+            elif what is not None:
+                # health/states failing wholesale — log every case, not just
+                # the one we happen to have a fallback for.
+                _LOGGER.warning(
+                    "Websocket request %r failed: %s",
+                    what,
+                    message.get("error"),
+                )
             return
 
         result = message.get("result")
@@ -298,16 +306,55 @@ class RecorderWatcher:
             await self._on_cluster(cluster)
 
     def _handle_system_health(self, result: dict[str, Any]) -> None:
-        recorder = (result.get("recorder") or {}).get("info") or {}
+        """Parse a system_health/info result.
+
+        The WS command does not return the component dicts at the top level —
+        it wraps them as {"type": "initial", "data": {<component>: {...}}},
+        with slower components filled in later via separate update events. Every
+        branch here logs on the way out, because the previous version of this
+        function read `result["recorder"]` directly (always absent, since the
+        real key is `result["data"]["recorder"]`) and returned silently on
+        every call. Stable connection, no exceptions, size forever null — a
+        wrong-shape bug is otherwise indistinguishable from no bug at all.
+        """
+        data = result.get("data")
+        if not isinstance(data, dict):
+            # Older/newer HA could plausibly flatten this; fall back to the
+            # unwrapped shape rather than assume the current one is permanent.
+            data = result if "recorder" in result else {}
+            if not data:
+                _LOGGER.warning(
+                    "system_health/info result has neither 'data' nor "
+                    "'recorder' at the top level; shape=%s",
+                    sorted(result.keys()) if isinstance(result, dict) else type(result),
+                )
+                return
+
+        recorder = (data.get("recorder") or {}).get("info")
+        if recorder is None:
+            _LOGGER.info(
+                "system_health/info has no 'recorder' component yet "
+                "(components so far: %s) — it may arrive in a later update",
+                sorted(data.keys()),
+            )
+            return
+
         raw = recorder.get("estimated_db_size")
         if not raw:
+            _LOGGER.info(
+                "Recorder health has no estimated_db_size (keys: %s)",
+                sorted(recorder.keys()),
+            )
             return
+
         # Reported as a human string like "82363.42 MiB".
         try:
             number, _, unit = str(raw).strip().partition(" ")
             size = float(number)
         except ValueError:
+            _LOGGER.warning("Could not parse estimated_db_size value: %r", raw)
             return
+
         multiplier = {
             "kib": 1024,
             "mib": 1024**2,
@@ -317,6 +364,11 @@ class RecorderWatcher:
             "gb": 1000**3,
         }.get(unit.strip().lower(), 1024**2)
         self._db_size_bytes = size * multiplier
+        _LOGGER.info(
+            "Recorder database size: %.1f MiB (engine: %s)",
+            self._db_size_bytes / (1024**2),
+            recorder.get("database_engine", "unknown"),
+        )
 
     def _maybe_roll_window(self) -> None:
         if time.time() - self._window_started < _WINDOW_SECONDS:

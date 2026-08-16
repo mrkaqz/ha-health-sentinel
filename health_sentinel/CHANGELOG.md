@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.2
+
+**Fixed**
+
+- Recorder database size and its history chart were always empty, on every
+  backend (SQLite and MariaDB alike — this had nothing to do with which one is
+  in use). `system_health/info` doesn't return component data at the top level;
+  it wraps everything as `{"type": "initial", "data": {...}}`, and the code was
+  reading `result["recorder"]` instead of `result["data"]["recorder"]`. That
+  key is always absent in the real shape, so the parser returned silently on
+  every single call — no exception, connection stayed healthy, nothing in the
+  logs to explain it. Every branch of this path now logs, and a regression
+  test uses the exact payload captured from a live instance while diagnosing
+  this, so the same wrong-shape bug can't hide silently again.
+- A websocket request failing outright is now logged for every request kind,
+  not only the one kind that happened to already have a fallback path.
+
 ## 0.3.1
 
 - The dashboard's JavaScript and CSS are now served with version-stamped URLs
