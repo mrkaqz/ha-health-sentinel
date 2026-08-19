@@ -3,6 +3,12 @@
 Home Assistant crashed again and there is nothing in the logs. This add-on
 exists to fix that.
 
+![The Health Sentinel dashboard](docs/images/dashboard.png)
+
+*The Now view. Host pressure, Core responsiveness, load and temperature —
+and an event feed showing real captures: a 3-minute Core outage, and two
+occasions where several unrelated integrations dropped together.*
+
 ## Why an add-on, and not an integration
 
 An add-on runs in its own container, supervised by the Supervisor. **When Home
